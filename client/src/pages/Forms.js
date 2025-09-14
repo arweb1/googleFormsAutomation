@@ -67,17 +67,24 @@ const Forms = () => {
       const response = await apiService.forms.analyze(formUrl);
       const formData = response.data;
       
+      // Отладочная информация
+      console.log('Ответ от API:', response);
+      console.log('Данные формы:', formData);
+      console.log('Количество полей:', formData.fields ? formData.fields.length : 0);
+      
       // Сохраняем конфигурацию
       const configData = {
         name: formData.title || 'Новая форма',
         url: formUrl,
         title: formData.title,
-        fields: formData.fields,
+        fields: formData.fields || [],
         submitAction: formData.submitAction,
         method: formData.method,
         description: `Автоматически создана из ${formUrl}`,
         tags: ['автоматически']
       };
+      
+      console.log('Данные для сохранения:', configData);
       
       await apiService.forms.saveConfig(configData);
       await loadForms();
