@@ -2,29 +2,31 @@
   "name": "google-forms-automator",
   "version": "1.0.0",
   "description": "Универсальный софт для автоматического заполнения Google Forms",
+  "main": "server/index.js",
   "scripts": {
-    "install-all": "npm install && cd frontend && npm install && cd ../backend && npm install",
-    "dev": "concurrently \"npm run backend:dev\" \"npm run frontend:dev\"",
-    "backend:dev": "cd backend && npm run dev",
-    "frontend:dev": "cd frontend && npm start",
-    "build": "cd frontend && npm run build",
-    "start": "cd backend && npm start",
-    "test": "cd backend && npm test",
-    "lint": "cd frontend && npm run lint"
+    "dev": "concurrently \"npm run server\" \"npm run client\"",
+    "server": "nodemon server/index.js",
+    "client": "cd client && npm start",
+    "build": "cd client && npm run build",
+    "start": "node server/index.js",
+    "install-all": "npm install && cd client && npm install"
   },
-  "keywords": [
-    "google-forms",
-    "automation",
-    "react",
-    "nodejs",
-    "puppeteer"
-  ],
+  "keywords": ["google-forms", "automation", "nodejs", "react"],
   "author": "Ruslan Agaev",
   "license": "MIT",
-  "devDependencies": {
-    "concurrently": "^8.2.2"
+  "dependencies": {
+    "express": "^4.18.2",
+    "cors": "^2.8.5",
+    "dotenv": "^16.3.1",
+    "puppeteer": "^21.5.2",
+    "axios": "^1.6.0",
+    "cheerio": "^1.0.0-rc.12",
+    "csv-parser": "^3.0.0",
+    "csv-writer": "^1.6.0",
+    "fs-extra": "^11.1.1"
   },
-  "engines": {
-    "node": ">=16.0.0"
+  "devDependencies": {
+    "nodemon": "^3.0.1",
+    "concurrently": "^8.2.2"
   }
 }
