@@ -18,10 +18,6 @@ import {
   Alert,
   CircularProgress,
   Grid,
-  FormControl,
-  InputLabel,
-  Select,
-  MenuItem,
   IconButton,
   Dialog,
   DialogTitle,
@@ -29,7 +25,6 @@ import {
   DialogActions
 } from '@mui/material';
 import {
-  Download as DownloadIcon,
   Refresh as RefreshIcon,
   Visibility as ViewIcon,
   GetApp as ExportIcon
@@ -54,7 +49,7 @@ const Results = () => {
     try {
       setLoading(true);
       const response = await apiService.automation.getAllJobs();
-      setJobs(response.data);
+      setJobs(response.data.data || []);
     } catch (error) {
       setError('Ошибка загрузки задач: ' + error.message);
     } finally {
@@ -65,7 +60,7 @@ const Results = () => {
   const loadJobResults = async (jobId) => {
     try {
       const response = await apiService.automation.getResults(jobId);
-      setResults(response.data);
+      setResults(response.data.data || []);
     } catch (error) {
       setError('Ошибка загрузки результатов: ' + error.message);
     }

@@ -7,7 +7,6 @@ import {
   Typography,
   Box,
   Button,
-  Chip,
   LinearProgress
 } from '@mui/material';
 import {
@@ -43,12 +42,12 @@ const Dashboard = () => {
         apiService.get('/automation/jobs')
       ]);
 
-      const activeJobs = jobsResponse.data.filter(job => job.status === 'running').length;
-      const completedJobs = jobsResponse.data.filter(job => job.status === 'completed').length;
+      const activeJobs = (jobsResponse.data.data || []).filter(job => job.status === 'running').length;
+      const completedJobs = (jobsResponse.data.data || []).filter(job => job.status === 'completed').length;
 
       setStats({
-        forms: formsResponse.data.length,
-        accounts: accountsResponse.data.length,
+        forms: (formsResponse.data.data || []).length,
+        accounts: (accountsResponse.data.data || []).length,
         activeJobs,
         completedJobs
       });

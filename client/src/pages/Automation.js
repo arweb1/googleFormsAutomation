@@ -21,8 +21,7 @@ import {
   DialogActions,
   TextField,
   FormControlLabel,
-  Switch,
-  Divider
+  Switch
 } from '@mui/material';
 import {
   PlayArrow as PlayIcon,
@@ -39,6 +38,8 @@ const Automation = () => {
   const [loading, setLoading] = useState(true);
   const [selectedForm, setSelectedForm] = useState('');
   const [selectedAccounts, setSelectedAccounts] = useState([]);
+  const [anonymousMode, setAnonymousMode] = useState(false);
+  const [submitCount, setSubmitCount] = useState(1);
   const [options, setOptions] = useState({
     delay: 1000,
     submit: true,
@@ -63,9 +64,9 @@ const Automation = () => {
         apiService.automation.getAllJobs()
       ]);
       
-      setForms(formsResponse.data);
-      setAccounts(accountsResponse.data);
-      setJobs(jobsResponse.data);
+      setForms(formsResponse.data.data || []);
+      setAccounts(accountsResponse.data.data || []);
+      setJobs(jobsResponse.data.data || []);
     } catch (error) {
       setError('Ошибка загрузки данных: ' + error.message);
     } finally {
@@ -76,15 +77,25 @@ const Automation = () => {
   const loadJobs = async () => {
     try {
       const response = await apiService.automation.getAllJobs();
-      setJobs(response.data);
+      setJobs(response.data.data || []);
     } catch (error) {
       console.error('Ошибка загрузки задач:', error);
     }
   };
 
   const handleStartAutomation = async () => {
-    if (!selectedForm || selectedAccounts.length === 0) {
-      setError('Выберите форму и аккаунты');
+    if (!selectedForm) {
+      setError('Выберите форму');
+      return;
+    }
+
+    if (!anonymousMode && selectedAccounts.length === 0) {
+      setError('Выберите аккаунты или включите анонимный режим');
+      return;
+    }
+
+    if (anonymousMode && submitCount < 1) {
+      setError('Количество отправок должно быть больше 0');
       return;
     }
 
@@ -92,10 +103,16 @@ const Automation = () => {
       setRunning(true);
       setError(null);
       
-      const response = await apiService.automation.start(
+      const automationOptions = {
+        ...options,
+        anonymousMode: anonymousMode,
+        submitCount: anonymousMode ? submitCount : undefined
+      };
+      
+      await apiService.automation.start(
         selectedForm,
         selectedAccounts,
-        options
+        automationOptions
       );
       
       await loadJobs();
@@ -183,41 +200,68 @@ const Automation = () => {
                   </Select>
                 </FormControl>
 
-                <FormControl fullWidth sx={{ mb: 2 }}>
-                  <InputLabel>Выберите аккаунты</InputLabel>
-                  <Select
-                    multiple
-                    value={selectedAccounts}
-                    onChange={(e) => setSelectedAccounts(e.target.value)}
-                    label="Выберите аккаунты"
-                    renderValue={(selected) => (
-                      <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 0.5 }}>
-                        {selected.map((value) => {
-                          const account = accounts.find(acc => acc.id === value);
-                          return (
-                            <Chip key={value} label={account?.email || value} size="small" />
-                          );
-                        })}
-                      </Box>
-                    )}
-                  >
-                    {accounts.map((account) => (
-                      <MenuItem key={account.id} value={account.id}>
-                        {account.email}
-                      </MenuItem>
-                    ))}
-                  </Select>
-                </FormControl>
+                {/* Переключатель анонимного режима */}
+                <FormControlLabel
+                  control={
+                    <Switch
+                      checked={anonymousMode}
+                      onChange={(e) => setAnonymousMode(e.target.checked)}
+                    />
+                  }
+                  label="Анонимный режим (без аккаунтов)"
+                  sx={{ mb: 2 }}
+                />
+
+                {anonymousMode ? (
+                  <TextField
+                    fullWidth
+                    label="Количество отправок"
+                    type="number"
+                    value={submitCount}
+                    onChange={(e) => setSubmitCount(parseInt(e.target.value) || 1)}
+                    inputProps={{ min: 1, max: 100 }}
+                    sx={{ mb: 2 }}
+                    helperText="Сколько раз заполнить форму"
+                  />
+                ) : (
+                  <FormControl fullWidth sx={{ mb: 2 }}>
+                    <InputLabel>Выберите аккаунты</InputLabel>
+                    <Select
+                      multiple
+                      value={selectedAccounts}
+                      onChange={(e) => setSelectedAccounts(e.target.value)}
+                      label="Выберите аккаунты"
+                      renderValue={(selected) => (
+                        <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 0.5 }}>
+                          {selected.map((value) => {
+                            const account = accounts.find(acc => acc.id === value);
+                            return (
+                              <Chip key={value} label={account?.email || value} size="small" />
+                            );
+                          })}
+                        </Box>
+                      )}
+                    >
+                      {accounts.map((account) => (
+                        <MenuItem key={account.id} value={account.id}>
+                          {account.email}
+                        </MenuItem>
+                      ))}
+                    </Select>
+                  </FormControl>
+                )}
 
                 <Box sx={{ display: 'flex', gap: 2, mb: 2 }}>
                   <Button
                     variant="contained"
                     startIcon={<PlayIcon />}
                     onClick={handleStartAutomation}
-                    disabled={running || !selectedForm || selectedAccounts.length === 0}
+                    disabled={running || !selectedForm || (!anonymousMode && selectedAccounts.length === 0)}
                     fullWidth
                   >
-                    {running ? 'Запуск...' : 'Запустить автоматизацию'}
+                    {running ? 'Запуск...' : 
+                     anonymousMode ? `Запустить анонимное заполнение (${submitCount} раз)` :
+                     'Запустить автоматизацию'}
                   </Button>
                   
                   <Button
@@ -230,7 +274,10 @@ const Automation = () => {
                 </Box>
 
                 <Typography variant="body2" color="text.secondary">
-                  Выбрано аккаунтов: {selectedAccounts.length}
+                  {anonymousMode ? 
+                    `Анонимный режим: ${submitCount} отправок` :
+                    `Выбрано аккаунтов: ${selectedAccounts.length}`
+                  }
                 </Typography>
               </CardContent>
             </Card>

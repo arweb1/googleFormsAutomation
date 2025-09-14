@@ -46,7 +46,7 @@ const Forms = () => {
     try {
       setLoading(true);
       const response = await apiService.forms.getConfigs();
-      setForms(response.data);
+      setForms(response.data.data || []);
     } catch (error) {
       setError('Ошибка загрузки форм: ' + error.message);
     } finally {

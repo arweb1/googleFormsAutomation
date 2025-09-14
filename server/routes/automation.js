@@ -7,10 +7,27 @@ router.post('/start', async (req, res) => {
   try {
     const { formConfigId, accountIds, options = {} } = req.body;
     
-    if (!formConfigId || !accountIds || !Array.isArray(accountIds)) {
-      return res.status(400).json({ 
-        error: 'ID конфигурации формы и ID аккаунтов обязательны' 
-      });
+    // Проверяем режим работы
+    if (options.anonymousMode) {
+      // Анонимный режим - проверяем только formConfigId и submitCount
+      if (!formConfigId) {
+        return res.status(400).json({ 
+          error: 'ID конфигурации формы обязателен' 
+        });
+      }
+      
+      if (!options.submitCount || options.submitCount < 1) {
+        return res.status(400).json({ 
+          error: 'Количество отправок должно быть больше 0' 
+        });
+      }
+    } else {
+      // Обычный режим - проверяем accountIds
+      if (!formConfigId || !accountIds || !Array.isArray(accountIds)) {
+        return res.status(400).json({ 
+          error: 'ID конфигурации формы и ID аккаунтов обязательны' 
+        });
+      }
     }
 
     const automator = new FormAutomator();
@@ -18,7 +35,9 @@ router.post('/start', async (req, res) => {
     
     res.json({
       success: true,
-      message: 'Автоматическое заполнение запущено',
+      message: options.anonymousMode ? 
+        `Анонимное заполнение запущено (${options.submitCount} отправок)` :
+        'Автоматическое заполнение запущено',
       jobId: jobId
     });
   } catch (error) {

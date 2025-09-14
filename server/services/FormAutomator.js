@@ -30,11 +30,20 @@ class FormAutomator {
         throw new Error('Конфигурация формы не найдена');
       }
 
-      // Получаем аккаунты
-      const accountManager = new AccountManager();
-      const accounts = await accountManager.getAccountsByIds(accountIds);
-      if (accounts.length === 0) {
-        throw new Error('Аккаунты не найдены');
+      let accounts = [];
+      
+      // Проверяем режим работы
+      if (options.anonymousMode) {
+        // Анонимный режим - создаем виртуальные аккаунты
+        const count = options.submitCount || 1;
+        accounts = this.generateAnonymousAccounts(count, formConfig);
+      } else {
+        // Обычный режим - получаем аккаунты из базы
+        const accountManager = new AccountManager();
+        accounts = await accountManager.getAccountsByIds(accountIds);
+        if (accounts.length === 0) {
+          throw new Error('Аккаунты не найдены');
+        }
       }
 
       // Создаем задачу
@@ -356,6 +365,83 @@ class FormAutomator {
 
   sleep(ms) {
     return new Promise(resolve => setTimeout(resolve, ms));
+  }
+
+  generateAnonymousAccounts(count, formConfig) {
+    const accounts = [];
+    
+    for (let i = 0; i < count; i++) {
+      const account = {
+        id: `anon_${Date.now()}_${i}`,
+        email: `anonymous_${i + 1}`,
+        password: '',
+        data: this.generateAnonymousData(formConfig.fields, i)
+      };
+      accounts.push(account);
+    }
+    
+    return accounts;
+  }
+
+  generateAnonymousData(fields, index) {
+    const data = {};
+    
+    fields.forEach(field => {
+      const fieldName = field.name || field.id;
+      
+      // Генерируем данные в зависимости от типа поля
+      switch (field.type) {
+        case 'text':
+        case 'textarea':
+          if (fieldName.toLowerCase().includes('email')) {
+            data[fieldName] = `user${index + 1}@example.com`;
+          } else if (fieldName.toLowerCase().includes('name')) {
+            data[fieldName] = `Пользователь ${index + 1}`;
+          } else if (fieldName.toLowerCase().includes('phone')) {
+            data[fieldName] = `+7${Math.floor(Math.random() * 9000000000) + 1000000000}`;
+          } else {
+            data[fieldName] = `Ответ ${index + 1}`;
+          }
+          break;
+          
+        case 'number':
+          data[fieldName] = Math.floor(Math.random() * 100) + 1;
+          break;
+          
+        case 'select':
+        case 'radio':
+          if (field.options && field.options.length > 0) {
+            const randomOption = field.options[Math.floor(Math.random() * field.options.length)];
+            data[fieldName] = randomOption.value;
+          }
+          break;
+          
+        case 'checkbox':
+          if (field.options && field.options.length > 0) {
+            const selectedCount = Math.floor(Math.random() * field.options.length) + 1;
+            const selected = [];
+            for (let i = 0; i < selectedCount; i++) {
+              const option = field.options[Math.floor(Math.random() * field.options.length)];
+              if (!selected.includes(option.value)) {
+                selected.push(option.value);
+              }
+            }
+            data[fieldName] = selected;
+          }
+          break;
+          
+        case 'date':
+          const date = new Date();
+          date.setDate(date.getDate() + Math.floor(Math.random() * 365));
+          data[fieldName] = date.toISOString().split('T')[0];
+          break;
+          
+        default:
+          data[fieldName] = `Значение ${index + 1}`;
+      }
+    });
+    
+    return data;
   }
 
   async close() {

@@ -27,7 +27,6 @@ import {
 import {
   Add as AddIcon,
   Upload as UploadIcon,
-  Download as DownloadIcon,
   Edit as EditIcon,
   Delete as DeleteIcon,
   Search as SearchIcon
@@ -57,7 +56,7 @@ const Accounts = () => {
     try {
       setLoading(true);
       const response = await apiService.accounts.getAll();
-      setAccounts(response.data);
+      setAccounts(response.data.data || []);
     } catch (error) {
       setError('Ошибка загрузки аккаунтов: ' + error.message);
     } finally {

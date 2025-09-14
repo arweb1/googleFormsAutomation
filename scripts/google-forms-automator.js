@@ -30,8 +30,9 @@ class GoogleFormsAutomator {
     console.log('2. 📋 Создать шаблон данных');
     console.log('3. 👥 Сгенерировать данные аккаунтов');
     console.log('4. 📝 Заполнить форму');
-    console.log('5. 🔄 Полный цикл (анализ → данные → заполнение)');
-    console.log('6. 📁 Просмотр файлов');
+    console.log('5. 👤 Анонимное заполнение (без аккаунтов)');
+    console.log('6. 🔄 Полный цикл (анализ → данные → заполнение)');
+    console.log('7. 📁 Просмотр файлов');
     console.log('0. ❌ Выход');
     console.log('');
   }
@@ -215,6 +216,87 @@ class GoogleFormsAutomator {
     }
   }
 
+  async anonymousFill() {
+    console.log('\n👤 АНОНИМНОЕ ЗАПОЛНЕНИЕ');
+    console.log('='.repeat(30));
+    
+    const formUrl = await this.question('🔗 URL формы: ');
+    const submitCount = await this.question('📊 Количество отправок: ');
+    const count = parseInt(submitCount) || 1;
+    
+    if (count < 1) {
+      console.log('❌ Количество отправок должно быть больше 0');
+      return;
+    }
+    
+    const headless = await this.question('👁️  Скрытый режим браузера? (y/n): ');
+    const noSubmit = await this.question('📤 Отключить отправку формы? (y/n): ');
+    
+    const filler = new FormFiller();
+    
+    try {
+      console.log(`📊 Будет выполнено ${count} анонимных отправок`);
+      
+      const results = [];
+      
+      for (let i = 0; i < count; i++) {
+        console.log(`\n👤 Отправка ${i + 1}/${count}`);
+        
+        try {
+          // Создаем виртуальный аккаунт
+          const virtualAccount = {
+            id: `anon_${i}`,
+            email: `anonymous_${i + 1}`,
+            password: '',
+            data: {
+              name: `Пользователь ${i + 1}`,
+              email: `user${i + 1}@example.com`,
+              phone: `+7${Math.floor(Math.random() * 9000000000) + 1000000000}`,
+              message: `Сообщение от пользователя ${i + 1}`
+            }
+          };
+          
+          const result = await filler.fillForm(formUrl, virtualAccount, {
+            headless: headless.toLowerCase() === 'y',
+            submit: noSubmit.toLowerCase() !== 'y'
+          });
+          
+          results.push(result);
+          
+          if (i < count - 1) {
+            console.log('⏳ Ожидание 2 секунды...');
+            await new Promise(resolve => setTimeout(resolve, 2000));
+          }
+          
+        } catch (error) {
+          console.error(`❌ Ошибка для отправки ${i + 1}:`, error.message);
+          results.push({
+            success: false,
+            account: `anonymous_${i + 1}`,
+            error: error.message,
+            timestamp: new Date().toISOString()
+          });
+        }
+      }
+      
+      // Сохраняем результаты
+      const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+      const resultsFile = path.join(__dirname, '../data', `anonymous-results-${timestamp}.json`);
+      await fs.ensureDir(path.dirname(resultsFile));
+      await fs.writeFile(resultsFile, JSON.stringify(results, null, 2));
+      
+      console.log(`\n📊 РЕЗУЛЬТАТЫ:`);
+      console.log(`✅ Успешно: ${results.filter(r => r.success).length}`);
+      console.log(`❌ Ошибок: ${results.filter(r => !r.success).length}`);
+      console.log(`💾 Результаты сохранены: ${resultsFile}`);
+      
+    } catch (error) {
+      console.error('❌ Ошибка анонимного заполнения:', error.message);
+    } finally {
+      await filler.close();
+    }
+  }
+
   async fullCycle() {
     console.log('\n🔄 ПОЛНЫЙ ЦИКЛ АВТОМАТИЗАЦИИ');
     console.log('='.repeat(35));
@@ -336,7 +418,7 @@ class GoogleFormsAutomator {
     while (true) {
       await this.showMenu();
       
-      const choice = await this.question('Выберите действие (0-6): ');
+      const choice = await this.question('Выберите действие (0-7): ');
       
       switch (choice) {
         case '1':
@@ -352,9 +434,12 @@ class GoogleFormsAutomator {
           await this.fillForm();
           break;
         case '5':
-          await this.fullCycle();
+          await this.anonymousFill();
           break;
         case '6':
+          await this.fullCycle();
+          break;
+        case '7':
           await this.listFiles();
           break;
         case '0':
