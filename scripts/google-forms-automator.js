@@ -31,8 +31,9 @@ class GoogleFormsAutomator {
     console.log('3. 👥 Сгенерировать данные аккаунтов');
     console.log('4. 📝 Заполнить форму');
     console.log('5. 👤 Анонимное заполнение (без аккаунтов)');
-    console.log('6. 🔄 Полный цикл (анализ → данные → заполнение)');
-    console.log('7. 📁 Просмотр файлов');
+    console.log('6. 📊 Заполнение с данными из CSV');
+    console.log('7. 🔄 Полный цикл (анализ → данные → заполнение)');
+    console.log('8. 📁 Просмотр файлов');
     console.log('0. ❌ Выход');
     console.log('');
   }
@@ -297,6 +298,87 @@ class GoogleFormsAutomator {
     }
   }
 
+  async fillWithCSVData() {
+    console.log('\n📊 ЗАПОЛНЕНИЕ С ДАННЫМИ ИЗ CSV');
+    console.log('='.repeat(40));
+    
+    const { loadAccountsFromCSV } = require('./load-accounts');
+    
+    try {
+      // Загружаем аккаунты из CSV
+      const accounts = await loadAccountsFromCSV();
+      
+      if (accounts.length === 0) {
+        console.log('❌ Нет данных для заполнения!');
+        return;
+      }
+      
+      console.log(`📋 Загружено ${accounts.length} аккаунтов:`);
+      accounts.forEach((account, index) => {
+        console.log(`  ${index + 1}. ${account.twitterHandle} | ${account.telegramHandle} | ${account.walletAddress}`);
+      });
+      
+      const formUrl = await this.question('\n🔗 URL формы: ');
+      
+      console.log('\n🚀 Начинаю заполнение формы...');
+      
+      const filler = new FormFiller();
+      const results = [];
+      
+      for (let i = 0; i < accounts.length; i++) {
+        const account = accounts[i];
+        console.log(`\n📝 Заполняю форму ${i + 1}/${accounts.length}...`);
+        
+        try {
+          // Создаем данные для формы на основе аккаунта
+          const formData = {
+            'field_1': account.twitterHandle,
+            'field_2': account.telegramHandle,
+            'field_3': account.walletAddress
+          };
+          
+          const result = await filler.fillForm(formUrl, formData);
+          results.push({
+            account: account.name,
+            success: true,
+            data: formData,
+            result: result
+          });
+          
+          console.log(`✅ Успешно заполнено: ${account.name}`);
+          
+          // Пауза между отправками
+          if (i < accounts.length - 1) {
+            console.log('⏳ Пауза 2 секунды...');
+            await new Promise(resolve => setTimeout(resolve, 2000));
+          }
+          
+        } catch (error) {
+          console.log(`❌ Ошибка для ${account.name}: ${error.message}`);
+          results.push({
+            account: account.name,
+            success: false,
+            error: error.message
+          });
+        }
+      }
+      
+      // Сохраняем результаты
+      const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+      const resultsFile = path.join(__dirname, '../data', `csv-results-${timestamp}.json`);
+      await fs.ensureDir(path.dirname(resultsFile));
+      await fs.writeFile(resultsFile, JSON.stringify(results, null, 2));
+      
+      console.log(`\n📊 РЕЗУЛЬТАТЫ:`);
+      console.log(`✅ Успешно: ${results.filter(r => r.success).length}`);
+      console.log(`❌ Ошибок: ${results.filter(r => !r.success).length}`);
+      console.log(`💾 Результаты сохранены: ${resultsFile}`);
+      
+    } catch (error) {
+      console.error('❌ Ошибка заполнения с CSV данными:', error.message);
+    }
+  }
+
   async fullCycle() {
     console.log('\n🔄 ПОЛНЫЙ ЦИКЛ АВТОМАТИЗАЦИИ');
     console.log('='.repeat(35));
@@ -437,9 +519,12 @@ class GoogleFormsAutomator {
           await this.anonymousFill();
           break;
         case '6':
-          await this.fullCycle();
+          await this.fillWithCSVData();
           break;
         case '7':
+          await this.fullCycle();
+          break;
+        case '8':
           await this.listFiles();
           break;
         case '0':
