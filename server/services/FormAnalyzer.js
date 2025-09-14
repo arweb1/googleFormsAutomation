@@ -27,7 +27,7 @@ class FormAnalyzer {
       await page.goto(formUrl, { waitUntil: 'networkidle2' });
       
       // Ждем загрузки контента формы - используем более общий селектор
-      await page.waitForSelector('input[type="text"], textarea, select', { timeout: 15000 });
+      await page.waitForSelector('input[type="text"], textarea, select, input[type="checkbox"], input[type="radio"]', { timeout: 15000 });
       
       // Дополнительное ожидание для полной загрузки
       await page.waitForTimeout(2000);
@@ -48,7 +48,22 @@ class FormAnalyzer {
           return input.offsetParent !== null;
         });
         
-        visibleInputs.forEach((input, index) => {
+        // Для чекбоксов и радио-кнопок группируем их по имени
+        const groupedInputs = [];
+        const processedNames = new Set();
+        
+        visibleInputs.forEach(input => {
+          if (input.type === 'checkbox' || input.type === 'radio') {
+            if (!processedNames.has(input.name)) {
+              processedNames.add(input.name);
+              groupedInputs.push(input);
+            }
+          } else {
+            groupedInputs.push(input);
+          }
+        });
+        
+        groupedInputs.forEach((input, index) => {
           const field = {
             id: `field_${index + 1}`,
             name: input.name || `field_${index + 1}`,
@@ -97,10 +112,34 @@ class FormAnalyzer {
           if (field.type === 'radio' || field.type === 'checkbox') {
             const radioGroup = document.querySelectorAll(`input[name="${input.name}"]`);
             radioGroup.forEach(radio => {
-              const label = radio.closest('label') || radio.parentElement;
+              // Ищем текст опции в различных элементах
+              let optionText = '';
+              
+              // Пробуем найти текст в label
+              const label = radio.closest('label');
+              if (label) {
+                optionText = label.textContent.trim();
+              } else {
+                // Ищем текст в родительских элементах
+                let currentEl = radio.parentElement;
+                while (currentEl && !optionText) {
+                  const textEl = currentEl.querySelector('span, div');
+                  if (textEl && textEl.textContent.trim()) {
+                    optionText = textEl.textContent.trim();
+                    break;
+                  }
+                  currentEl = currentEl.parentElement;
+                }
+              }
+              
+              // Если текст не найден, используем value
+              if (!optionText) {
+                optionText = radio.value || 'Опция';
+              }
+              
               field.options.push({
                 value: radio.value,
-                label: label.textContent.trim(),
+                label: optionText,
                 checked: radio.checked
               });
             });

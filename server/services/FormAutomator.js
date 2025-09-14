@@ -334,22 +334,104 @@ class FormAutomator {
 
   async fillRadioField(page, field, account) {
     const value = this.getValueForField(field, account);
-    if (value) {
-      const selector = `input[name="${field.name}"][value="${value}"]`;
-      await page.click(selector);
+    if (!value) {
+      console.log(`Пропускаем радио-кнопку ${field.title} - нет значения`);
+      return;
+    }
+
+    console.log(`Заполняем радио-кнопку ${field.title} значением: ${value}`);
+
+    try {
+      // Пробуем разные способы поиска радио-кнопки
+      const selectors = [
+        `input[name="${field.name}"][value="${value}"]`,
+        `input[name="${field.name}"][type="radio"]`,
+        `input[type="radio"]`
+      ];
+      
+      let clicked = false;
+      for (const selector of selectors) {
+        try {
+          const elements = await page.$$(selector);
+          if (elements.length > 0) {
+            // Ищем элемент с нужным значением
+            for (const element of elements) {
+              const elementValue = await page.evaluate(el => el.value, element);
+              if (elementValue === value) {
+                await element.click();
+                console.log(`✅ Радио-кнопка "${value}" выбрана`);
+                clicked = true;
+                break;
+              }
+            }
+            if (clicked) break;
+          }
+        } catch (error) {
+          console.log(`❌ Селектор ${selector} не сработал: ${error.message}`);
+          continue;
+        }
+      }
+      
+      if (!clicked) {
+        console.log(`❌ Не удалось выбрать радио-кнопку "${value}"`);
+      }
+      
+    } catch (error) {
+      console.error(`❌ Ошибка заполнения радио-кнопки ${field.title}:`, error.message);
     }
   }
 
   async fillCheckboxField(page, field, account) {
     const values = this.getValueForField(field, account);
-    if (Array.isArray(values)) {
-      for (const value of values) {
-        const selector = `input[name="${field.name}"][value="${value}"]`;
-        await page.click(selector);
+    if (!values) {
+      console.log(`Пропускаем чекбокс ${field.title} - нет значения`);
+      return;
+    }
+
+    console.log(`Заполняем чекбокс ${field.title} значениями:`, values);
+
+    try {
+      // Преобразуем значение в массив если это строка
+      const valuesArray = Array.isArray(values) ? values : [values];
+      
+      for (const value of valuesArray) {
+        // Пробуем разные способы поиска чекбокса
+        const selectors = [
+          `input[name="${field.name}"][value="${value}"]`,
+          `input[name="${field.name}"][type="checkbox"]`,
+          `input[type="checkbox"]`
+        ];
+        
+        let clicked = false;
+        for (const selector of selectors) {
+          try {
+            const elements = await page.$$(selector);
+            if (elements.length > 0) {
+              // Ищем элемент с нужным значением
+              for (const element of elements) {
+                const elementValue = await page.evaluate(el => el.value, element);
+                if (elementValue === value || !value) {
+                  await element.click();
+                  console.log(`✅ Чекбокс "${value}" отмечен`);
+                  clicked = true;
+                  break;
+                }
+              }
+              if (clicked) break;
+            }
+          } catch (error) {
+            console.log(`❌ Селектор ${selector} не сработал: ${error.message}`);
+            continue;
+          }
+        }
+        
+        if (!clicked) {
+          console.log(`❌ Не удалось отметить чекбокс "${value}"`);
+        }
       }
-    } else if (values) {
-      const selector = `input[name="${field.name}"][value="${values}"]`;
-      await page.click(selector);
+      
+    } catch (error) {
+      console.error(`❌ Ошибка заполнения чекбокса ${field.title}:`, error.message);
     }
   }
 
