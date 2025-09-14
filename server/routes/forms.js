@@ -89,4 +89,27 @@ router.get('/config/:id', async (req, res) => {
   }
 });
 
+// Удаление конфигурации по ID
+router.delete('/config/:id', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const deleted = await FormConfig.deleteById(id);
+    
+    if (!deleted) {
+      return res.status(404).json({ error: 'Конфигурация не найдена' });
+    }
+    
+    res.json({
+      success: true,
+      message: 'Конфигурация удалена'
+    });
+  } catch (error) {
+    console.error('Ошибка удаления конфигурации:', error);
+    res.status(500).json({ 
+      error: 'Ошибка при удалении конфигурации',
+      details: error.message 
+    });
+  }
+});
+
 module.exports = router;
