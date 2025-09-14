@@ -21,6 +21,19 @@ router.post('/start', async (req, res) => {
           error: 'Количество отправок должно быть больше 0' 
         });
       }
+    } else if (options.customDataMode) {
+      // Режим пользовательских данных - проверяем formConfigId и accountData
+      if (!formConfigId) {
+        return res.status(400).json({ 
+          error: 'ID конфигурации формы обязателен' 
+        });
+      }
+      
+      if (!options.accountData || !Array.isArray(options.accountData) || options.accountData.length === 0) {
+        return res.status(400).json({ 
+          error: 'Данные аккаунтов обязательны' 
+        });
+      }
     } else {
       // Обычный режим - проверяем accountIds
       if (!formConfigId || !accountIds || !Array.isArray(accountIds)) {
@@ -37,6 +50,8 @@ router.post('/start', async (req, res) => {
       success: true,
       message: options.anonymousMode ? 
         `Анонимное заполнение запущено (${options.submitCount} отправок)` :
+        options.customDataMode ?
+        `Заполнение с пользовательскими данными запущено (${options.accountData.length} аккаунтов)` :
         'Автоматическое заполнение запущено',
       jobId: jobId
     });

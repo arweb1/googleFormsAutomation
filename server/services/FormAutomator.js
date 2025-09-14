@@ -37,6 +37,14 @@ class FormAutomator {
         // Анонимный режим - создаем виртуальные аккаунты
         const count = options.submitCount || 1;
         accounts = this.generateAnonymousAccounts(count, formConfig);
+      } else if (options.customDataMode) {
+        // Режим пользовательских данных - используем предоставленные данные
+        accounts = options.accountData.map(accountData => ({
+          id: accountData.id,
+          name: accountData.name,
+          email: `${accountData.name}@example.com`,
+          fields: accountData.fields
+        }));
       } else {
         // Обычный режим - получаем аккаунты из базы
         const accountManager = new AccountManager();
@@ -278,12 +286,17 @@ class FormAutomator {
   }
 
   getValueForField(field, account) {
+    // Сначала проверяем пользовательские данные (если есть)
+    if (account.fields && account.fields[field.id]) {
+      return account.fields[field.id];
+    }
+    
     // Ищем значение в данных аккаунта по имени поля
-    let value = account.data[field.name];
+    let value = account.data && account.data[field.name];
     
     // Если значение не найдено, пробуем найти по ID
     if (value === undefined) {
-      value = account.data[field.id];
+      value = account.data && account.data[field.id];
     }
     
     // Если все еще не найдено, используем значение по умолчанию

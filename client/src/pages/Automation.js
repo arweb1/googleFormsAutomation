@@ -40,6 +40,8 @@ const Automation = () => {
   const [selectedAccounts, setSelectedAccounts] = useState([]);
   const [anonymousMode, setAnonymousMode] = useState(false);
   const [submitCount, setSubmitCount] = useState(1);
+  const [customDataMode, setCustomDataMode] = useState(false);
+  const [accountData, setAccountData] = useState([]);
   const [options, setOptions] = useState({
     delay: 1000,
     submit: true,
@@ -83,19 +85,76 @@ const Automation = () => {
     }
   };
 
+  const initializeAccountData = (formId) => {
+    const form = forms.find(f => f.id === formId);
+    if (!form || !form.fields) return;
+
+    const data = [];
+    for (let i = 0; i < (customDataMode ? submitCount : selectedAccounts.length); i++) {
+      const accountDataItem = {
+        id: `account_${i + 1}`,
+        name: customDataMode ? `Аккаунт ${i + 1}` : (selectedAccounts[i]?.name || `Аккаунт ${i + 1}`),
+        fields: {}
+      };
+
+      // Инициализируем поля формы
+      form.fields.forEach(field => {
+        accountDataItem.fields[field.id] = '';
+      });
+
+      data.push(accountDataItem);
+    }
+
+    setAccountData(data);
+  };
+
+  const updateAccountField = (accountIndex, fieldId, value) => {
+    const newAccountData = [...accountData];
+    newAccountData[accountIndex].fields[fieldId] = value;
+    setAccountData(newAccountData);
+  };
+
+  const handleCustomDataModeChange = (event) => {
+    setCustomDataMode(event.target.checked);
+    if (event.target.checked) {
+      setAnonymousMode(false);
+      setSelectedAccounts([]);
+    }
+  };
+
+  const handleAnonymousModeChange = (event) => {
+    setAnonymousMode(event.target.checked);
+    if (event.target.checked) {
+      setCustomDataMode(false);
+      setSelectedAccounts([]);
+    }
+  };
+
+  const handleFormChange = (event) => {
+    setSelectedForm(event.target.value);
+    if (customDataMode) {
+      initializeAccountData(event.target.value);
+    }
+  };
+
   const handleStartAutomation = async () => {
     if (!selectedForm) {
       setError('Выберите форму');
       return;
     }
 
-    if (!anonymousMode && selectedAccounts.length === 0) {
-      setError('Выберите аккаунты или включите анонимный режим');
+    if (!anonymousMode && !customDataMode && selectedAccounts.length === 0) {
+      setError('Выберите аккаунты, включите анонимный режим или режим пользовательских данных');
       return;
     }
 
     if (anonymousMode && submitCount < 1) {
       setError('Количество отправок должно быть больше 0');
+      return;
+    }
+
+    if (customDataMode && accountData.length === 0) {
+      setError('Нет данных для заполнения');
       return;
     }
 
@@ -106,12 +165,14 @@ const Automation = () => {
       const automationOptions = {
         ...options,
         anonymousMode: anonymousMode,
-        submitCount: anonymousMode ? submitCount : undefined
+        customDataMode: customDataMode,
+        submitCount: anonymousMode ? submitCount : undefined,
+        accountData: customDataMode ? accountData : undefined
       };
       
       await apiService.automation.start(
         selectedForm,
-        selectedAccounts,
+        customDataMode ? [] : selectedAccounts,
         automationOptions
       );
       
@@ -189,7 +250,7 @@ const Automation = () => {
                   <InputLabel>Выберите форму</InputLabel>
                   <Select
                     value={selectedForm}
-                    onChange={(e) => setSelectedForm(e.target.value)}
+                    onChange={handleFormChange}
                     label="Выберите форму"
                   >
                     {forms.map((form) => (
@@ -205,10 +266,22 @@ const Automation = () => {
                   control={
                     <Switch
                       checked={anonymousMode}
-                      onChange={(e) => setAnonymousMode(e.target.checked)}
+                      onChange={handleAnonymousModeChange}
                     />
                   }
                   label="Анонимный режим (без аккаунтов)"
+                  sx={{ mb: 2 }}
+                />
+
+                {/* Переключатель режима пользовательских данных */}
+                <FormControlLabel
+                  control={
+                    <Switch
+                      checked={customDataMode}
+                      onChange={handleCustomDataModeChange}
+                    />
+                  }
+                  label="Режим пользовательских данных"
                   sx={{ mb: 2 }}
                 />
 
@@ -251,16 +324,80 @@ const Automation = () => {
                   </FormControl>
                 )}
 
+                {/* Интерфейс для пользовательских данных */}
+                {customDataMode && selectedForm && (
+                  <Box sx={{ mb: 2 }}>
+                    <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
+                      <Typography variant="h6">
+                        Данные для заполнения
+                      </Typography>
+                      <Button
+                        variant="outlined"
+                        size="small"
+                        onClick={() => {
+                          const form = forms.find(f => f.id === selectedForm);
+                          if (!form || !form.fields) return;
+                          
+                          const newAccount = {
+                            id: `account_${accountData.length + 1}`,
+                            name: `Аккаунт ${accountData.length + 1}`,
+                            fields: {}
+                          };
+                          
+                          form.fields.forEach(field => {
+                            newAccount.fields[field.id] = '';
+                          });
+                          
+                          setAccountData([...accountData, newAccount]);
+                        }}
+                      >
+                        + Добавить аккаунт
+                      </Button>
+                    </Box>
+                    
+                    {accountData.map((account, accountIndex) => {
+                      const form = forms.find(f => f.id === selectedForm);
+                      if (!form || !form.fields) return null;
+                      
+                      return (
+                        <Card key={account.id} sx={{ mb: 2 }}>
+                          <CardContent>
+                            <Typography variant="subtitle1" gutterBottom>
+                              {account.name}
+                            </Typography>
+                            
+                            <Grid container spacing={2}>
+                              {form.fields.map((field) => (
+                                <Grid item xs={12} sm={6} md={4} key={field.id}>
+                                  <TextField
+                                    fullWidth
+                                    label={field.title}
+                                    value={account.fields[field.id] || ''}
+                                    onChange={(e) => updateAccountField(accountIndex, field.id, e.target.value)}
+                                    placeholder={`Введите ${field.title.toLowerCase()}`}
+                                    size="small"
+                                  />
+                                </Grid>
+                              ))}
+                            </Grid>
+                          </CardContent>
+                        </Card>
+                      );
+                    })}
+                  </Box>
+                )}
+
                 <Box sx={{ display: 'flex', gap: 2, mb: 2 }}>
                   <Button
                     variant="contained"
                     startIcon={<PlayIcon />}
                     onClick={handleStartAutomation}
-                    disabled={running || !selectedForm || (!anonymousMode && selectedAccounts.length === 0)}
+                    disabled={running || !selectedForm || (!anonymousMode && !customDataMode && selectedAccounts.length === 0)}
                     fullWidth
                   >
                     {running ? 'Запуск...' : 
                      anonymousMode ? `Запустить анонимное заполнение (${submitCount} раз)` :
+                     customDataMode ? `Запустить заполнение (${accountData.length} аккаунтов)` :
                      'Запустить автоматизацию'}
                   </Button>
                   
