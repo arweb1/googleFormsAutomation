@@ -448,9 +448,9 @@ const Automation = () => {
                 </Box>
 
                 <Typography variant="body2" color="text.secondary">
-                  {anonymousMode ? 
-                    `Анонимный режим: ${submitCount} отправок` :
-                    `Выбрано аккаунтов: ${selectedAccounts.length}`
+                  {loginMode === 'google' ? 
+                    `Режим с логином Google: ${selectedAccounts.length} аккаунтов` :
+                    `Анонимный режим: ${accountData.length} аккаунтов`
                   }
                 </Typography>
               </CardContent>
