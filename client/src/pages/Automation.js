@@ -30,11 +30,14 @@ import {
   Settings as SettingsIcon
 } from '@mui/icons-material';
 import { apiService } from '../services/apiService';
+import AutomationProgress from '../components/AutomationProgress';
 
 const Automation = () => {
   const [forms, setForms] = useState([]);
   const [accounts, setAccounts] = useState([]);
   const [jobs, setJobs] = useState([]);
+  const [activeJob, setActiveJob] = useState(null);
+  const [jobLogs, setJobLogs] = useState([]);
   const [loading, setLoading] = useState(true);
   const [selectedForm, setSelectedForm] = useState('');
   const [selectedAccounts, setSelectedAccounts] = useState([]);
@@ -214,11 +217,23 @@ const Automation = () => {
         accountData: accountData
       };
       
-      await apiService.automation.start(
+      const response = await apiService.automation.start(
         selectedForm,
         loginMode === 'google' ? selectedAccounts : [],
         automationOptions
       );
+      
+      // Начинаем отслеживание активной задачи
+      if (response && response.jobId) {
+        setActiveJob({ 
+          id: response.jobId, 
+          status: 'running', 
+          totalAccounts: accountData.length, 
+          completedAccounts: 0 
+        });
+        setJobLogs([]);
+        startJobMonitoring(response.jobId);
+      }
       
       await loadJobs();
       
@@ -227,6 +242,31 @@ const Automation = () => {
     } finally {
       setRunning(false);
     }
+  };
+
+  const startJobMonitoring = (jobId) => {
+    const interval = setInterval(async () => {
+      try {
+        const jobResponse = await apiService.automation.getStatus(jobId);
+        if (jobResponse && jobResponse.success) {
+          const job = jobResponse.data;
+          setActiveJob(job);
+          
+          // Если задача завершена, останавливаем мониторинг
+          if (job.status === 'completed' || job.status === 'failed') {
+            clearInterval(interval);
+            await loadJobs(); // Обновляем список задач
+          }
+        }
+      } catch (error) {
+        console.error('Ошибка получения статуса задачи:', error);
+      }
+    }, 2000); // Проверяем каждые 2 секунды
+
+    // Останавливаем мониторинг через 10 минут
+    setTimeout(() => {
+      clearInterval(interval);
+    }, 600000);
   };
 
   const handleStopJob = async (jobId) => {
@@ -510,6 +550,13 @@ const Automation = () => {
               </CardContent>
             </Card>
           </Grid>
+
+          {/* Прогресс активной задачи */}
+          {activeJob && (
+            <Grid item xs={12}>
+              <AutomationProgress job={activeJob} logs={jobLogs} />
+            </Grid>
+          )}
 
           {/* Список задач */}
           <Grid item xs={12}>

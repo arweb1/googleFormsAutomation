@@ -174,7 +174,7 @@ class FormAutomator {
       // Заполняем поля формы
       console.log('📝 Начинаем заполнение полей...');
       for (const field of formConfig.fields) {
-        await this.fillField(page, field, account, options);
+        await this.fillField(page, field, account, options, formConfig);
       }
       
       // Отправляем форму
@@ -198,7 +198,7 @@ class FormAutomator {
     }
   }
 
-  async fillField(page, field, account, options) {
+  async fillField(page, field, account, options, formConfig) {
     try {
       const selector = `[name="${field.name}"], #${field.id}`;
       
@@ -208,7 +208,7 @@ class FormAutomator {
         case 'tel':
         case 'url':
         case 'textarea':
-          await this.fillTextField(page, selector, field, account);
+          await this.fillTextField(page, selector, field, account, formConfig);
           break;
           
         case 'number':
@@ -244,7 +244,7 @@ class FormAutomator {
     }
   }
 
-  async fillTextField(page, selector, field, account) {
+  async fillTextField(page, selector, field, account, formConfig) {
     const value = this.getValueForField(field, account);
     if (!value) {
       console.log(`Пропускаем поле ${field.title} - нет значения`);
@@ -254,39 +254,58 @@ class FormAutomator {
     console.log(`Заполняем поле ${field.title} значением: ${value}`);
 
     try {
-      // Пробуем разные селекторы для современных Google Forms
-      const selectors = [
-        selector, // Оригинальный селектор
-        'input[type="text"]', // Общий селектор для текстовых полей
-        '.whsOnd.zHQkBf', // Класс для полей Google Forms
-        'input[aria-label*="' + field.title + '"]', // По aria-label
-        'input[placeholder*="' + field.title + '"]' // По placeholder
-      ];
-
+      // Используем более точный подход для поиска поля
       let filled = false;
-      for (const sel of selectors) {
+      
+      // Сначала пробуем найти поле по индексу (порядку на странице)
+      const allInputs = await page.$$('input[type="text"], textarea');
+      const fieldIndex = formConfig.fields.indexOf(field);
+      
+      if (allInputs.length > fieldIndex) {
         try {
-          const elements = await page.$$(sel);
-          if (elements.length > 0) {
-            // Берем первый доступный элемент
-            await elements[0].click();
-            await elements[0].type(value);
-            console.log(`Успешно заполнено поле ${field.title} селектором: ${sel}`);
-            filled = true;
-            break;
-          }
+          await allInputs[fieldIndex].click();
+          await allInputs[fieldIndex].type(value);
+          console.log(`✅ Успешно заполнено поле ${field.title} по индексу ${fieldIndex}`);
+          filled = true;
         } catch (error) {
-          console.log(`Селектор ${sel} не сработал: ${error.message}`);
-          continue;
+          console.log(`❌ Не удалось заполнить поле ${field.title} по индексу: ${error.message}`);
+        }
+      }
+      
+      // Если не получилось по индексу, пробуем другие селекторы
+      if (!filled) {
+        const selectors = [
+          selector, // Оригинальный селектор
+          'input[aria-label*="' + field.title + '"]', // По aria-label
+          'input[placeholder*="' + field.title + '"]', // По placeholder
+          '.whsOnd.zHQkBf', // Класс для полей Google Forms
+          'input[type="text"]' // Общий селектор для текстовых полей
+        ];
+
+        for (const sel of selectors) {
+          try {
+            const elements = await page.$$(sel);
+            if (elements.length > 0) {
+              // Берем первый доступный элемент
+              await elements[0].click();
+              await elements[0].type(value);
+              console.log(`✅ Успешно заполнено поле ${field.title} селектором: ${sel}`);
+              filled = true;
+              break;
+            }
+          } catch (error) {
+            console.log(`❌ Селектор ${sel} не сработал: ${error.message}`);
+            continue;
+          }
         }
       }
 
       if (!filled) {
-        console.log(`Не удалось заполнить поле ${field.title}`);
+        console.log(`❌ Не удалось заполнить поле ${field.title}`);
       }
 
     } catch (error) {
-      console.error(`Ошибка заполнения поля ${field.title}:`, error.message);
+      console.error(`❌ Ошибка заполнения поля ${field.title}:`, error.message);
     }
   }
 
