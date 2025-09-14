@@ -8,39 +8,22 @@ router.post('/start', async (req, res) => {
     const { formConfigId, accountIds, options = {} } = req.body;
     
     // Проверяем режим работы
-    if (options.anonymousMode) {
-      // Анонимный режим - проверяем только formConfigId и submitCount
-      if (!formConfigId) {
-        return res.status(400).json({ 
-          error: 'ID конфигурации формы обязателен' 
-        });
-      }
-      
-      if (!options.submitCount || options.submitCount < 1) {
-        return res.status(400).json({ 
-          error: 'Количество отправок должно быть больше 0' 
-        });
-      }
-    } else if (options.customDataMode) {
-      // Режим пользовательских данных - проверяем formConfigId и accountData
-      if (!formConfigId) {
-        return res.status(400).json({ 
-          error: 'ID конфигурации формы обязателен' 
-        });
-      }
-      
-      if (!options.accountData || !Array.isArray(options.accountData) || options.accountData.length === 0) {
-        return res.status(400).json({ 
-          error: 'Данные аккаунтов обязательны' 
-        });
-      }
-    } else {
-      // Обычный режим - проверяем accountIds
-      if (!formConfigId || !accountIds || !Array.isArray(accountIds)) {
-        return res.status(400).json({ 
-          error: 'ID конфигурации формы и ID аккаунтов обязательны' 
-        });
-      }
+    if (!formConfigId) {
+      return res.status(400).json({ 
+        error: 'ID конфигурации формы обязателен' 
+      });
+    }
+    
+    if (!options.accountData || !Array.isArray(options.accountData) || options.accountData.length === 0) {
+      return res.status(400).json({ 
+        error: 'Данные аккаунтов обязательны' 
+      });
+    }
+    
+    if (options.loginMode === 'google' && (!accountIds || !Array.isArray(accountIds) || accountIds.length === 0)) {
+      return res.status(400).json({ 
+        error: 'Для режима с логином Google необходимо выбрать аккаунты' 
+      });
     }
 
     const automator = new FormAutomator();
@@ -48,11 +31,7 @@ router.post('/start', async (req, res) => {
     
     res.json({
       success: true,
-      message: options.anonymousMode ? 
-        `Анонимное заполнение запущено (${options.submitCount} отправок)` :
-        options.customDataMode ?
-        `Заполнение с пользовательскими данными запущено (${options.accountData.length} аккаунтов)` :
-        'Автоматическое заполнение запущено',
+      message: `Заполнение запущено (${options.accountData.length} аккаунтов, ${options.loginMode === 'google' ? 'с логином Google' : 'анонимно'})`,
       jobId: jobId
     });
   } catch (error) {

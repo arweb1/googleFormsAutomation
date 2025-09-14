@@ -38,10 +38,10 @@ const Automation = () => {
   const [loading, setLoading] = useState(true);
   const [selectedForm, setSelectedForm] = useState('');
   const [selectedAccounts, setSelectedAccounts] = useState([]);
-  const [anonymousMode, setAnonymousMode] = useState(false);
-  const [submitCount, setSubmitCount] = useState(1);
-  const [customDataMode, setCustomDataMode] = useState(false);
+  const [loginMode, setLoginMode] = useState('anonymous'); // 'google' или 'anonymous'
   const [accountData, setAccountData] = useState([]);
+  const [csvFile, setCsvFile] = useState(null);
+  const [csvData, setCsvData] = useState([]);
   const [options, setOptions] = useState({
     delay: 1000,
     submit: true,
@@ -85,15 +85,15 @@ const Automation = () => {
     }
   };
 
-  const initializeAccountData = (formId) => {
+  const initializeAccountData = (formId, count = 1) => {
     const form = forms.find(f => f.id === formId);
     if (!form || !form.fields) return;
 
     const data = [];
-    for (let i = 0; i < (customDataMode ? submitCount : selectedAccounts.length); i++) {
+    for (let i = 0; i < count; i++) {
       const accountDataItem = {
         id: `account_${i + 1}`,
-        name: customDataMode ? `Аккаунт ${i + 1}` : (selectedAccounts[i]?.name || `Аккаунт ${i + 1}`),
+        name: `Аккаунт ${i + 1}`,
         fields: {}
       };
 
@@ -114,27 +114,78 @@ const Automation = () => {
     setAccountData(newAccountData);
   };
 
-  const handleCustomDataModeChange = (event) => {
-    setCustomDataMode(event.target.checked);
-    if (event.target.checked) {
-      setAnonymousMode(false);
-      setSelectedAccounts([]);
-    }
+  const handleCsvImport = (event) => {
+    const file = event.target.files[0];
+    if (!file) return;
+
+    setCsvFile(file);
+    
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      const csvText = e.target.result;
+      const lines = csvText.split('\n');
+      const headers = lines[0].split(',').map(h => h.trim());
+      
+      const data = [];
+      for (let i = 1; i < lines.length; i++) {
+        if (lines[i].trim()) {
+          const values = lines[i].split(',').map(v => v.trim());
+          const row = {};
+          headers.forEach((header, index) => {
+            row[header] = values[index] || '';
+          });
+          data.push(row);
+        }
+      }
+      
+      setCsvData(data);
+      
+      // Автоматически создаем аккаунты на основе CSV данных
+      const form = forms.find(f => f.id === selectedForm);
+      if (form && form.fields) {
+        const accountDataFromCsv = data.map((row, index) => {
+          const account = {
+            id: `account_${index + 1}`,
+            name: `Аккаунт ${index + 1}`,
+            fields: {}
+          };
+          
+          // Сопоставляем CSV колонки с полями формы
+          form.fields.forEach(field => {
+            // Ищем соответствующую колонку в CSV
+            const csvColumn = headers.find(header => 
+              header.toLowerCase().includes(field.title.toLowerCase()) ||
+              header.toLowerCase().includes(field.id.toLowerCase())
+            );
+            
+            if (csvColumn && row[csvColumn]) {
+              account.fields[field.id] = row[csvColumn];
+            } else {
+              account.fields[field.id] = '';
+            }
+          });
+          
+          return account;
+        });
+        
+        setAccountData(accountDataFromCsv);
+      }
+    };
+    
+    reader.readAsText(file);
   };
 
-  const handleAnonymousModeChange = (event) => {
-    setAnonymousMode(event.target.checked);
-    if (event.target.checked) {
-      setCustomDataMode(false);
+  const handleLoginModeChange = (event) => {
+    setLoginMode(event.target.value);
+    if (event.target.value === 'anonymous') {
       setSelectedAccounts([]);
     }
   };
 
   const handleFormChange = (event) => {
     setSelectedForm(event.target.value);
-    if (customDataMode) {
-      initializeAccountData(event.target.value);
-    }
+    // Инициализируем один аккаунт по умолчанию
+    initializeAccountData(event.target.value, 1);
   };
 
   const handleStartAutomation = async () => {
@@ -143,17 +194,12 @@ const Automation = () => {
       return;
     }
 
-    if (!anonymousMode && !customDataMode && selectedAccounts.length === 0) {
-      setError('Выберите аккаунты, включите анонимный режим или режим пользовательских данных');
+    if (loginMode === 'google' && selectedAccounts.length === 0) {
+      setError('Выберите Google аккаунты для режима с логином');
       return;
     }
 
-    if (anonymousMode && submitCount < 1) {
-      setError('Количество отправок должно быть больше 0');
-      return;
-    }
-
-    if (customDataMode && accountData.length === 0) {
+    if (accountData.length === 0) {
       setError('Нет данных для заполнения');
       return;
     }
@@ -164,15 +210,13 @@ const Automation = () => {
       
       const automationOptions = {
         ...options,
-        anonymousMode: anonymousMode,
-        customDataMode: customDataMode,
-        submitCount: anonymousMode ? submitCount : undefined,
-        accountData: customDataMode ? accountData : undefined
+        loginMode: loginMode,
+        accountData: accountData
       };
       
       await apiService.automation.start(
         selectedForm,
-        customDataMode ? [] : selectedAccounts,
+        loginMode === 'google' ? selectedAccounts : [],
         automationOptions
       );
       
@@ -261,49 +305,28 @@ const Automation = () => {
                   </Select>
                 </FormControl>
 
-                {/* Переключатель анонимного режима */}
-                <FormControlLabel
-                  control={
-                    <Switch
-                      checked={anonymousMode}
-                      onChange={handleAnonymousModeChange}
-                    />
-                  }
-                  label="Анонимный режим (без аккаунтов)"
-                  sx={{ mb: 2 }}
-                />
+                {/* Выбор режима входа */}
+                <FormControl fullWidth sx={{ mb: 2 }}>
+                  <InputLabel>Режим входа</InputLabel>
+                  <Select
+                    value={loginMode}
+                    onChange={handleLoginModeChange}
+                    label="Режим входа"
+                  >
+                    <MenuItem value="anonymous">Без логина Google (анонимно)</MenuItem>
+                    <MenuItem value="google">С логином Google</MenuItem>
+                  </Select>
+                </FormControl>
 
-                {/* Переключатель режима пользовательских данных */}
-                <FormControlLabel
-                  control={
-                    <Switch
-                      checked={customDataMode}
-                      onChange={handleCustomDataModeChange}
-                    />
-                  }
-                  label="Режим пользовательских данных"
-                  sx={{ mb: 2 }}
-                />
-
-                {anonymousMode ? (
-                  <TextField
-                    fullWidth
-                    label="Количество отправок"
-                    type="number"
-                    value={submitCount}
-                    onChange={(e) => setSubmitCount(parseInt(e.target.value) || 1)}
-                    inputProps={{ min: 1, max: 100 }}
-                    sx={{ mb: 2 }}
-                    helperText="Сколько раз заполнить форму"
-                  />
-                ) : (
+                {/* Выбор Google аккаунтов (только для режима с логином) */}
+                {loginMode === 'google' && (
                   <FormControl fullWidth sx={{ mb: 2 }}>
-                    <InputLabel>Выберите аккаунты</InputLabel>
+                    <InputLabel>Выберите Google аккаунты</InputLabel>
                     <Select
                       multiple
                       value={selectedAccounts}
                       onChange={(e) => setSelectedAccounts(e.target.value)}
-                      label="Выберите аккаунты"
+                      label="Выберите Google аккаунты"
                       renderValue={(selected) => (
                         <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 0.5 }}>
                           {selected.map((value) => {
@@ -324,35 +347,51 @@ const Automation = () => {
                   </FormControl>
                 )}
 
-                {/* Интерфейс для пользовательских данных */}
-                {customDataMode && selectedForm && (
+                {/* Интерфейс для данных */}
+                {selectedForm && (
                   <Box sx={{ mb: 2 }}>
                     <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
                       <Typography variant="h6">
                         Данные для заполнения
                       </Typography>
-                      <Button
-                        variant="outlined"
-                        size="small"
-                        onClick={() => {
-                          const form = forms.find(f => f.id === selectedForm);
-                          if (!form || !form.fields) return;
-                          
-                          const newAccount = {
-                            id: `account_${accountData.length + 1}`,
-                            name: `Аккаунт ${accountData.length + 1}`,
-                            fields: {}
-                          };
-                          
-                          form.fields.forEach(field => {
-                            newAccount.fields[field.id] = '';
-                          });
-                          
-                          setAccountData([...accountData, newAccount]);
-                        }}
-                      >
-                        + Добавить аккаунт
-                      </Button>
+                      <Box sx={{ display: 'flex', gap: 1 }}>
+                        <Button
+                          variant="outlined"
+                          size="small"
+                          component="label"
+                          startIcon={<SettingsIcon />}
+                        >
+                          Импорт CSV
+                          <input
+                            type="file"
+                            accept=".csv"
+                            hidden
+                            onChange={handleCsvImport}
+                          />
+                        </Button>
+                        <Button
+                          variant="outlined"
+                          size="small"
+                          onClick={() => {
+                            const form = forms.find(f => f.id === selectedForm);
+                            if (!form || !form.fields) return;
+                            
+                            const newAccount = {
+                              id: `account_${accountData.length + 1}`,
+                              name: `Аккаунт ${accountData.length + 1}`,
+                              fields: {}
+                            };
+                            
+                            form.fields.forEach(field => {
+                              newAccount.fields[field.id] = '';
+                            });
+                            
+                            setAccountData([...accountData, newAccount]);
+                          }}
+                        >
+                          + Добавить аккаунт
+                        </Button>
+                      </Box>
                     </Box>
                     
                     {accountData.map((account, accountIndex) => {
@@ -392,13 +431,11 @@ const Automation = () => {
                     variant="contained"
                     startIcon={<PlayIcon />}
                     onClick={handleStartAutomation}
-                    disabled={running || !selectedForm || (!anonymousMode && !customDataMode && selectedAccounts.length === 0)}
+                    disabled={running || !selectedForm || accountData.length === 0 || (loginMode === 'google' && selectedAccounts.length === 0)}
                     fullWidth
                   >
                     {running ? 'Запуск...' : 
-                     anonymousMode ? `Запустить анонимное заполнение (${submitCount} раз)` :
-                     customDataMode ? `Запустить заполнение (${accountData.length} аккаунтов)` :
-                     'Запустить автоматизацию'}
+                     `Запустить заполнение (${accountData.length} аккаунтов, ${loginMode === 'google' ? 'с логином' : 'анонимно'})`}
                   </Button>
                   
                   <Button

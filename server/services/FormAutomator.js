@@ -32,26 +32,27 @@ class FormAutomator {
 
       let accounts = [];
       
-      // Проверяем режим работы
-      if (options.anonymousMode) {
-        // Анонимный режим - создаем виртуальные аккаунты
-        const count = options.submitCount || 1;
-        accounts = this.generateAnonymousAccounts(count, formConfig);
-      } else if (options.customDataMode) {
-        // Режим пользовательских данных - используем предоставленные данные
-        accounts = options.accountData.map(accountData => ({
-          id: accountData.id,
-          name: accountData.name,
-          email: `${accountData.name}@example.com`,
-          fields: accountData.fields
-        }));
-      } else {
-        // Обычный режим - получаем аккаунты из базы
+      // Используем предоставленные данные аккаунтов
+      accounts = options.accountData.map(accountData => ({
+        id: accountData.id,
+        name: accountData.name,
+        email: `${accountData.name}@example.com`,
+        fields: accountData.fields,
+        loginMode: options.loginMode || 'anonymous'
+      }));
+      
+      // Если режим с логином Google, добавляем информацию об аккаунтах
+      if (options.loginMode === 'google' && accountIds && accountIds.length > 0) {
         const accountManager = new AccountManager();
-        accounts = await accountManager.getAccountsByIds(accountIds);
-        if (accounts.length === 0) {
-          throw new Error('Аккаунты не найдены');
-        }
+        const googleAccounts = await accountManager.getAccountsByIds(accountIds);
+        
+        // Сопоставляем Google аккаунты с данными
+        accounts.forEach((account, index) => {
+          if (googleAccounts[index]) {
+            account.googleAccount = googleAccounts[index];
+            account.email = googleAccounts[index].email;
+          }
+        });
       }
 
       // Создаем задачу
