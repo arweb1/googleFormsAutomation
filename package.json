@@ -9,7 +9,12 @@
     "client": "cd client && npm start",
     "build": "cd client && npm run build",
     "start": "node server/index.js",
-    "install-all": "npm install && cd client && npm install"
+    "install-all": "npm install && cd client && npm install",
+    "analyze": "node scripts/analyze-form.js",
+    "generate": "node scripts/generate-data.js",
+    "template": "node scripts/create-template.js",
+    "fill": "node scripts/fill-form.js",
+    "automator": "node scripts/google-forms-automator.js"
   },
   "keywords": ["google-forms", "automation", "nodejs", "react"],
   "author": "Ruslan Agaev",
