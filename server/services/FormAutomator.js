@@ -149,28 +149,45 @@ class FormAutomator {
     const page = await browser.newPage();
     
     try {
+      console.log(`\n🚀 Начинаем заполнение формы для аккаунта: ${account.name}`);
+      console.log(`📝 URL формы: ${formConfig.url}`);
+      console.log(`📊 Количество полей: ${formConfig.fields.length}`);
+      
       // Устанавливаем User-Agent
       await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36');
       
       // Переходим на форму
+      console.log('🌐 Переходим на страницу формы...');
       await page.goto(formConfig.url, { waitUntil: 'networkidle2' });
       
-      // Ждем загрузки формы
-      await page.waitForSelector('form', { timeout: 10000 });
+      // Ждем загрузки формы (современные Google Forms могут не иметь стандартной формы)
+      console.log('⏳ Ждем загрузки формы...');
+      try {
+        await page.waitForSelector('form', { timeout: 5000 });
+        console.log('✅ Стандартная форма найдена');
+      } catch (error) {
+        console.log('⚠️ Стандартная форма не найдена, ждем загрузки полей ввода...');
+        await page.waitForSelector('input[type="text"], textarea, select', { timeout: 10000 });
+        console.log('✅ Поля ввода найдены');
+      }
       
       // Заполняем поля формы
+      console.log('📝 Начинаем заполнение полей...');
       for (const field of formConfig.fields) {
         await this.fillField(page, field, account, options);
       }
       
       // Отправляем форму
       if (options.submit !== false) {
+        console.log('📤 Отправляем форму...');
         await this.submitForm(page, formConfig);
       }
       
       // Ждем подтверждения отправки
+      console.log('⏳ Ждем подтверждения отправки...');
       await this.waitForSubmission(page);
       
+      console.log('✅ Форма успешно отправлена!');
       return {
         success: true,
         submittedAt: new Date()
@@ -229,8 +246,47 @@ class FormAutomator {
 
   async fillTextField(page, selector, field, account) {
     const value = this.getValueForField(field, account);
-    if (value) {
-      await page.type(selector, value);
+    if (!value) {
+      console.log(`Пропускаем поле ${field.title} - нет значения`);
+      return;
+    }
+
+    console.log(`Заполняем поле ${field.title} значением: ${value}`);
+
+    try {
+      // Пробуем разные селекторы для современных Google Forms
+      const selectors = [
+        selector, // Оригинальный селектор
+        'input[type="text"]', // Общий селектор для текстовых полей
+        '.whsOnd.zHQkBf', // Класс для полей Google Forms
+        'input[aria-label*="' + field.title + '"]', // По aria-label
+        'input[placeholder*="' + field.title + '"]' // По placeholder
+      ];
+
+      let filled = false;
+      for (const sel of selectors) {
+        try {
+          const elements = await page.$$(sel);
+          if (elements.length > 0) {
+            // Берем первый доступный элемент
+            await elements[0].click();
+            await elements[0].type(value);
+            console.log(`Успешно заполнено поле ${field.title} селектором: ${sel}`);
+            filled = true;
+            break;
+          }
+        } catch (error) {
+          console.log(`Селектор ${sel} не сработал: ${error.message}`);
+          continue;
+        }
+      }
+
+      if (!filled) {
+        console.log(`Не удалось заполнить поле ${field.title}`);
+      }
+
+    } catch (error) {
+      console.error(`Ошибка заполнения поля ${field.title}:`, error.message);
     }
   }
 
@@ -309,25 +365,39 @@ class FormAutomator {
   }
 
   async submitForm(page, formConfig) {
-    // Ищем кнопку отправки
+    console.log('Ищем кнопку отправки формы...');
+    
+    // Ищем кнопку отправки для современных Google Forms
     const submitSelectors = [
       'input[type="submit"]',
       'button[type="submit"]',
       'button:contains("Отправить")',
       'button:contains("Submit")',
-      '.freebirdFormviewerViewNavigationSubmitButton'
+      '.freebirdFormviewerViewNavigationSubmitButton',
+      '[role="button"]:contains("Submit")',
+      'button[jsname="M2UYVd"]', // Кнопка отправки Google Forms
+      'div[role="button"]:contains("Submit")',
+      'span:contains("Submit")',
+      'button:contains("Отправить")',
+      'div:contains("Submit")'
     ];
     
     for (const selector of submitSelectors) {
       try {
-        await page.click(selector);
-        return;
+        const elements = await page.$$(selector);
+        if (elements.length > 0) {
+          await elements[0].click();
+          console.log(`Нажата кнопка отправки: ${selector}`);
+          return;
+        }
       } catch (error) {
-        // Пробуем следующий селектор
+        console.log(`Селектор ${selector} не сработал: ${error.message}`);
+        continue;
       }
     }
     
     // Если не нашли кнопку, пробуем отправить форму через Enter
+    console.log('Кнопка отправки не найдена, пробуем Enter...');
     await page.keyboard.press('Enter');
   }
 
