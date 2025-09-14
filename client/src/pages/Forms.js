@@ -65,7 +65,7 @@ const Forms = () => {
       setError(null);
       
       const response = await apiService.forms.analyze(formUrl);
-      const formData = response.data;
+      const formData = response.data.data; // Исправляем парсинг ответа
       
       // Отладочная информация
       console.log('Ответ от API:', response);
