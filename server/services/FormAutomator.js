@@ -180,6 +180,8 @@ class FormAutomator {
       // Отправляем форму
       if (options.submit !== false) {
         console.log('📤 Отправляем форму...');
+        // Небольшая задержка перед отправкой
+        await page.waitForTimeout(1000);
         await this.submitForm(page, formConfig);
       }
       
@@ -386,49 +388,139 @@ class FormAutomator {
   async submitForm(page, formConfig) {
     console.log('Ищем кнопку отправки формы...');
     
-    // Ищем кнопку отправки для современных Google Forms
-    const submitSelectors = [
-      'input[type="submit"]',
-      'button[type="submit"]',
-      'button:contains("Отправить")',
-      'button:contains("Submit")',
-      '.freebirdFormviewerViewNavigationSubmitButton',
-      '[role="button"]:contains("Submit")',
-      'button[jsname="M2UYVd"]', // Кнопка отправки Google Forms
-      'div[role="button"]:contains("Submit")',
-      'span:contains("Submit")',
-      'button:contains("Отправить")',
-      'div:contains("Submit")'
-    ];
-    
-    for (const selector of submitSelectors) {
-      try {
-        const elements = await page.$$(selector);
-        if (elements.length > 0) {
-          await elements[0].click();
-          console.log(`Нажата кнопка отправки: ${selector}`);
-          return;
+    try {
+      // Используем page.evaluate для поиска кнопки отправки
+      const submitButton = await page.evaluate(() => {
+        // Ищем кнопки с текстом Submit или Отправить
+        const buttons = Array.from(document.querySelectorAll('button, input[type="submit"], div[role="button"], span'));
+        
+        for (const button of buttons) {
+          const text = button.textContent?.toLowerCase() || '';
+          const ariaLabel = button.getAttribute('aria-label')?.toLowerCase() || '';
+          
+          if (text.includes('submit') || text.includes('отправить') || 
+              ariaLabel.includes('submit') || ariaLabel.includes('отправить')) {
+            return {
+              tagName: button.tagName,
+              className: button.className,
+              id: button.id,
+              text: button.textContent
+            };
+          }
         }
-      } catch (error) {
-        console.log(`Селектор ${selector} не сработал: ${error.message}`);
-        continue;
+        
+        // Ищем кнопки с определенными классами Google Forms
+        const googleButtons = document.querySelectorAll('.freebirdFormviewerViewNavigationSubmitButton, [jsname="M2UYVd"], button[data-value="Submit"]');
+        if (googleButtons.length > 0) {
+          const button = googleButtons[0];
+          return {
+            tagName: button.tagName,
+            className: button.className,
+            id: button.id,
+            text: button.textContent
+          };
+        }
+        
+        return null;
+      });
+      
+      if (submitButton) {
+        console.log(`Найдена кнопка отправки:`, submitButton);
+        
+        // Пробуем разные способы клика
+        const clickMethods = [
+          // Метод 1: Клик по селектору
+          async () => {
+            const selector = submitButton.id ? `#${submitButton.id}` : 
+                           submitButton.className ? `.${submitButton.className.split(' ')[0]}` : 
+                           submitButton.tagName.toLowerCase();
+            await page.click(selector);
+          },
+          
+          // Метод 2: Клик через evaluate
+          async () => {
+            await page.evaluate(() => {
+              const buttons = Array.from(document.querySelectorAll('button, input[type="submit"], div[role="button"], span'));
+              for (const button of buttons) {
+                const text = button.textContent?.toLowerCase() || '';
+                if (text.includes('submit') || text.includes('отправить')) {
+                  button.click();
+                  return;
+                }
+              }
+            });
+          },
+          
+          // Метод 3: Клик по Google Forms кнопке
+          async () => {
+            await page.evaluate(() => {
+              const googleButton = document.querySelector('.freebirdFormviewerViewNavigationSubmitButton, [jsname="M2UYVd"]');
+              if (googleButton) {
+                googleButton.click();
+              }
+            });
+          }
+        ];
+        
+        for (const clickMethod of clickMethods) {
+          try {
+            await clickMethod();
+            console.log('✅ Кнопка отправки нажата успешно!');
+            return;
+          } catch (error) {
+            console.log(`❌ Метод клика не сработал: ${error.message}`);
+            continue;
+          }
+        }
       }
+      
+      // Если не нашли кнопку, пробуем отправить форму через Enter
+      console.log('Кнопка отправки не найдена, пробуем Enter...');
+      await page.keyboard.press('Enter');
+      
+    } catch (error) {
+      console.error('Ошибка при поиске кнопки отправки:', error.message);
+      // В крайнем случае пробуем Enter
+      await page.keyboard.press('Enter');
     }
-    
-    // Если не нашли кнопку, пробуем отправить форму через Enter
-    console.log('Кнопка отправки не найдена, пробуем Enter...');
-    await page.keyboard.press('Enter');
   }
 
   async waitForSubmission(page) {
     try {
-      // Ждем появления сообщения об успешной отправке
-      await page.waitForSelector('.freebirdFormviewerViewResponseConfirmationMessage, .thank-you, .success', { 
-        timeout: 10000 
-      });
+      console.log('⏳ Ждем подтверждения отправки формы...');
+      
+      // Ждем изменения URL или появления сообщения об успешной отправке
+      await Promise.race([
+        // Ждем изменения URL (Google Forms перенаправляет после отправки)
+        page.waitForFunction(() => {
+          return window.location.href.includes('formResponse') || 
+                 window.location.href.includes('thankyou') ||
+                 window.location.href.includes('confirmation');
+        }, { timeout: 15000 }),
+        
+        // Ждем появления сообщения об успешной отправке
+        page.waitForSelector('.freebirdFormviewerViewResponseConfirmationMessage, .thank-you, .success, [data-response-id]', { 
+          timeout: 15000 
+        }),
+        
+        // Ждем исчезновения формы
+        page.waitForFunction(() => {
+          const form = document.querySelector('form');
+          return !form || form.style.display === 'none';
+        }, { timeout: 15000 })
+      ]);
+      
+      console.log('✅ Форма успешно отправлена!');
+      
     } catch (error) {
-      // Если не дождались подтверждения, это не критично
-      console.log('Не удалось дождаться подтверждения отправки');
+      // Проверяем, не изменился ли URL
+      const currentUrl = page.url();
+      if (currentUrl.includes('formResponse') || currentUrl.includes('thankyou')) {
+        console.log('✅ Форма отправлена (определено по URL)');
+        return;
+      }
+      
+      console.log('⚠️ Не удалось дождаться подтверждения отправки, но форма могла быть отправлена');
     }
   }
 
