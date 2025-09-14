@@ -26,31 +26,109 @@ class FormAnalyzer {
       
       await page.goto(formUrl, { waitUntil: 'networkidle2' });
       
-      // Ждем загрузки формы
-      await page.waitForSelector('form', { timeout: 10000 });
+      // Ждем загрузки контента формы - используем более общий селектор
+      await page.waitForSelector('input[type="text"], textarea, select', { timeout: 15000 });
       
-      // Получаем HTML формы
-      const formHtml = await page.evaluate(() => {
-        const form = document.querySelector('form');
-        return form ? form.outerHTML : null;
+      // Дополнительное ожидание для полной загрузки
+      await page.waitForTimeout(2000);
+      
+      // Получаем данные формы через JavaScript
+      const formData = await page.evaluate(() => {
+        const fields = [];
+        
+        // Ищем все видимые поля ввода
+        const visibleInputs = Array.from(document.querySelectorAll('input, textarea, select')).filter(input => {
+          // Пропускаем скрытые поля
+          if (input.type === 'hidden') return false;
+          if (input.name === 'fvv' || input.name === 'partialResponse' || 
+              input.name === 'pageHistory' || input.name === 'fbzx' || 
+              input.name === 'submissionTimestamp') return false;
+          
+          // Проверяем видимость
+          return input.offsetParent !== null;
+        });
+        
+        visibleInputs.forEach((input, index) => {
+          const field = {
+            id: `field_${index + 1}`,
+            name: input.name || `field_${index + 1}`,
+            type: input.type || 'text',
+            required: input.hasAttribute('required'),
+            placeholder: input.placeholder || '',
+            title: '',
+            description: '',
+            options: []
+          };
+          
+          // Ищем заголовок поля - ищем в родительских элементах
+          let currentElement = input.parentElement;
+          let titleFound = false;
+          
+          // Поднимаемся по DOM дереву в поисках заголовка
+          while (currentElement && !titleFound) {
+            // Ищем текст в различных элементах
+            const textElements = currentElement.querySelectorAll('span, div, label, p');
+            for (const textEl of textElements) {
+              const text = textEl.textContent.trim();
+            // Пропускаем пустые тексты и технические элементы
+            if (text && text.length > 0 && 
+                !text.includes('Your answer') && 
+                !text.includes('Ваша відповідь') &&
+                !text.includes('Submit') &&
+                !text.includes('Clear form') &&
+                !text.includes('Sign in to Google') &&
+                !text.includes('Learn more') &&
+                text.length < 100 &&
+                text.length > 3) {
+                field.title = text;
+                titleFound = true;
+                break;
+              }
+            }
+            currentElement = currentElement.parentElement;
+          }
+          
+          // Если заголовок не найден, создаем общий
+          if (!field.title) {
+            field.title = `Поле ${index + 1}`;
+          }
+          
+          // Для полей выбора получаем варианты
+          if (field.type === 'radio' || field.type === 'checkbox') {
+            const radioGroup = document.querySelectorAll(`input[name="${input.name}"]`);
+            radioGroup.forEach(radio => {
+              const label = radio.closest('label') || radio.parentElement;
+              field.options.push({
+                value: radio.value,
+                label: label.textContent.trim(),
+                checked: radio.checked
+              });
+            });
+          } else if (field.type === 'select') {
+            const options = input.querySelectorAll('option');
+            options.forEach(option => {
+              field.options.push({
+                value: option.value,
+                label: option.textContent.trim(),
+                selected: option.selected
+              });
+            });
+          }
+          
+          fields.push(field);
+        });
+        
+        return fields;
       });
-      
-      if (!formHtml) {
-        throw new Error('Форма не найдена на странице');
-      }
-      
-      // Анализируем форму с помощью Cheerio
-      const $ = cheerio.load(formHtml);
-      const formData = this.parseForm($);
       
       await page.close();
       
       return {
         url: formUrl,
         title: await this.getFormTitle(page),
-        fields: formData.fields,
-        submitAction: formData.submitAction,
-        method: formData.method,
+        fields: formData,
+        submitAction: '',
+        method: 'POST',
         timestamp: new Date().toISOString()
       };
       
@@ -63,8 +141,23 @@ class FormAnalyzer {
   async getFormTitle(page) {
     try {
       const title = await page.evaluate(() => {
-        const titleElement = document.querySelector('h1, .freebirdFormviewerViewHeaderTitle');
-        return titleElement ? titleElement.textContent.trim() : 'Без названия';
+        const titleSelectors = [
+          'h1',
+          '.freebirdFormviewerViewHeaderTitle',
+          '.freebirdFormviewerViewHeaderTitleContainer',
+          '.freebirdFormviewerViewHeaderTitleContainerTitle',
+          '[data-params*="title"]',
+          '.freebirdFormviewerViewHeaderTitleContainerTitleText'
+        ];
+        
+        for (const selector of titleSelectors) {
+          const titleElement = document.querySelector(selector);
+          if (titleElement && titleElement.textContent.trim()) {
+            return titleElement.textContent.trim();
+          }
+        }
+        
+        return 'Без названия';
       });
       return title;
     } catch (error) {
