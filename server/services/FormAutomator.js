@@ -2,6 +2,8 @@ const puppeteer = require('puppeteer');
 const FormConfig = require('../models/FormConfig');
 const AccountManager = require('./AccountManager');
 const AutomationJob = require('../models/AutomationJob');
+const BrowserProfileManager = require('./BrowserProfileManager');
+const Proxy = require('../models/Proxy');
 const fs = require('fs-extra');
 const path = require('path');
 
@@ -10,6 +12,7 @@ class FormAutomator {
     this.jobs = new Map();
     this.browser = null;
     this.jobModel = new AutomationJob();
+    this.profileManager = new BrowserProfileManager();
   }
 
   async initBrowser(options = {}) {
@@ -137,14 +140,10 @@ class FormAutomator {
     console.log(`✅ Задача найдена: ${job.status}`);
 
     try {
-      console.log(`🌐 Инициализация браузера...`);
-      const browser = await this.initBrowser(options);
-      console.log(`✅ Браузер инициализирован`);
-      
       // Добавляем лог о начале обработки
       await this.jobModel.addLog(jobId, {
         type: 'info',
-        message: 'Браузер инициализирован, начинаем обработку аккаунтов'
+        message: 'Начинаем обработку аккаунтов'
       });
       
       for (let i = 0; i < accounts.length; i++) {
@@ -160,7 +159,7 @@ class FormAutomator {
             accountId: account.id
           });
           
-          const result = await this.fillFormForAccount(browser, formConfig, account, options, i);
+          const result = await this.fillFormForAccountWithProfile(formConfig, account, options, i);
           
           // Добавляем результат успешной обработки
           await this.jobModel.addResult(jobId, {
@@ -244,30 +243,35 @@ class FormAutomator {
       // Небольшая задержка перед отправкой уведомления
       await new Promise(resolve => setTimeout(resolve, 1000));
       
-      // Отправляем уведомление о завершении
-      await this.sendNotification({
-        type: 'success',
-        message: `🎉 Задача "${formConfig.title}" завершена! Обработано: ${job.completedAccounts}, Ошибок: ${job.failedAccounts}`,
-        sound: true
-      });
+      // Отправляем уведомление о завершении только если есть успешные аккаунты
+      if (job.completedAccounts > 0) {
+        const notificationType = job.failedAccounts === 0 ? 'success' : 'warning';
+        const notificationMessage = job.failedAccounts === 0 
+          ? `🎉 Задача "${formConfig.title}" завершена успешно! Обработано: ${job.completedAccounts}`
+          : `⚠️ Задача "${formConfig.title}" завершена с ошибками! Успешно: ${job.completedAccounts}, Ошибок: ${job.failedAccounts}`;
+        
+        await this.sendNotification({
+          type: notificationType,
+          message: notificationMessage,
+          sound: true
+        });
+      }
       
-      // Закрываем браузер после завершения всех задач
-      console.log('🔒 Закрываем браузер...');
-      await browser.close();
-      console.log('✅ Браузер закрыт');
+      // Закрываем все браузеры после завершения всех задач
+      console.log('🔒 Закрываем все браузеры...');
+      await this.profileManager.closeAllBrowsers();
+      console.log('✅ Все браузеры закрыты');
       
     } catch (error) {
       console.error(`Критическая ошибка в задаче ${jobId}:`, error);
       
-      // Закрываем браузер в случае ошибки
+      // Закрываем все браузеры в случае ошибки
       try {
-        if (browser) {
-          console.log('🔒 Закрываем браузер из-за ошибки...');
-          await browser.close();
-          console.log('✅ Браузер закрыт');
-        }
+        console.log('🔒 Закрываем все браузеры из-за ошибки...');
+        await this.profileManager.closeAllBrowsers();
+        console.log('✅ Все браузеры закрыты');
       } catch (closeError) {
-        console.error('Ошибка при закрытии браузера:', closeError);
+        console.error('Ошибка при закрытии браузеров:', closeError);
       }
       
       await this.updateJobStatus(jobId, 'failed', error.message);
@@ -278,6 +282,147 @@ class FormAutomator {
         message: `❌ Задача "${formConfig?.title || 'Неизвестная'}" завершилась с ошибкой: ${error.message}`,
         sound: true
       });
+    }
+  }
+
+  async fillFormForAccountWithProfile(formConfig, account, options, accountIndex = 0) {
+    let browser = null;
+    
+    try {
+      // Настраиваем прокси для Google аккаунтов
+      let proxySettings = null;
+      if (options.loginMode === 'google' && options.selectedProxyGroup) {
+        try {
+          // Получаем прокси из выбранной группы
+          const proxies = await Proxy.getByGroup(options.selectedProxyGroup);
+          if (proxies.length > 0) {
+            const proxy = proxies[accountIndex % proxies.length];
+            proxySettings = {
+              enabled: true,
+              type: proxy.type,
+              host: proxy.host,
+              port: proxy.port,
+              username: proxy.username,
+              password: proxy.password
+            };
+            
+            console.log(`🔗 Используем прокси для аккаунта ${account.id}: ${proxy.host}:${proxy.port}`);
+            
+            // Отмечаем прокси как использованный
+            try {
+              if (proxy && typeof proxy.markAsUsed === 'function') {
+                await proxy.markAsUsed();
+                console.log(`✅ Прокси отмечен как использованный`);
+              }
+            } catch (markError) {
+              console.error(`❌ Ошибка при отметке прокси как использованного:`, markError);
+            }
+          } else {
+            console.log(`⚠️ В группе прокси "${options.selectedProxyGroup}" нет доступных прокси`);
+          }
+        } catch (proxyError) {
+          console.error(`❌ Ошибка при работе с прокси:`, proxyError);
+          console.log(`🔄 Продолжаем без прокси...`);
+          proxySettings = null;
+        }
+      }
+      
+      // Запускаем браузер с профилем для этого аккаунта
+      console.log(`🌐 Запуск браузера с профилем для аккаунта: ${account.id}`);
+      browser = await this.profileManager.launchBrowserWithProfile(account.id, options, proxySettings);
+      
+      // Если требуется вход в Google, авторизуемся прежде чем идти на форму
+      if ((options.loginMode === 'google')) {
+        const loginEmail = (account.googleAccount && account.googleAccount.email) || account.email;
+        const loginPassword = (account.googleAccount && account.googleAccount.password) || account.password;
+
+        if (!loginEmail || !loginPassword) {
+          throw new Error('У аккаунта отсутствуют email или пароль для входа в Google');
+        }
+
+        console.log(`🔐 Авторизация в Google для аккаунта: ${loginEmail}`);
+        await this.ensureLoggedInGoogle(browser, loginEmail, loginPassword);
+        console.log('✅ Авторизация в Google успешно выполнена');
+      }
+
+      // Заполняем форму
+      const result = await this.fillFormForAccount(browser, formConfig, account, options, accountIndex);
+      
+      return result;
+      
+    } catch (error) {
+      console.error(`❌ Ошибка в fillFormForAccountWithProfile для аккаунта ${account.id}:`, error);
+      throw error; // Не пробуем без прокси, если прокси нужен
+    } finally {
+      // Закрываем браузер для этого аккаунта
+      if (browser) {
+        await this.profileManager.closeBrowserForAccount(account.id);
+      }
+    }
+  }
+
+  async ensureLoggedInGoogle(browser, email, password) {
+    const page = await browser.newPage();
+    try {
+      await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.5735.110 Safari/537.36');
+
+      // Проверим, не залогинен ли уже профиль
+      await page.goto('https://accounts.google.com/', { waitUntil: 'networkidle2', timeout: 60000 });
+      const currentUrl = page.url();
+      if (currentUrl.includes('myaccount.google.com') || currentUrl.includes('signin/v2/challenge/selection') === false && await page.$('a[href*="SignOutOptions"], a[href*="Logout"]')) {
+        console.log('ℹ️ Похоже, уже авторизованы в Google');
+        return;
+      }
+
+      // Переходим на страницу входа
+      await page.goto('https://accounts.google.com/ServiceLogin?hl=en', { waitUntil: 'networkidle2', timeout: 60000 });
+
+      // Вводим email
+      const emailSelectorCandidates = ['input#identifierId', 'input[type="email"]'];
+      let emailSelector = null;
+      for (const sel of emailSelectorCandidates) {
+        const el = await page.$(sel);
+        if (el) { emailSelector = sel; break; }
+      }
+      if (!emailSelector) {
+        throw new Error('Поле email на странице Google не найдено');
+      }
+      await page.click(emailSelector, { clickCount: 3 });
+      await page.type(emailSelector, String(email), { delay: 50 });
+      const nextBtn1 = await page.$('#identifierNext button, #identifierNext');
+      if (!nextBtn1) throw new Error('Кнопка Next на шаге email не найдена');
+      await nextBtn1.click();
+
+      // Ждем поле пароля
+      await page.waitForSelector('input[name="Passwd"], input[type="password"]', { visible: true, timeout: 60000 });
+      const passSelector = (await page.$('input[name="Passwd"]')) ? 'input[name="Passwd"]' : 'input[type="password"]';
+      await page.click(passSelector, { clickCount: 3 });
+      await page.type(passSelector, String(password), { delay: 50 });
+      const nextBtn2 = await page.$('#passwordNext button, #passwordNext');
+      if (!nextBtn2) throw new Error('Кнопка Next на шаге пароля не найдена');
+      await Promise.all([
+        page.waitForNavigation({ waitUntil: 'networkidle2', timeout: 60000 }).catch(() => {}),
+        nextBtn2.click()
+      ]);
+
+      // Проверяем успешный вход: редирект на myaccount или наличие меню аккаунта
+      const finalUrl = page.url();
+      if (!finalUrl.includes('myaccount.google.com')) {
+        // Иногда редиректит обратно. Проверим наличие индикатора аккаунта
+        await page.waitForTimeout(2000);
+        const accountIndicator = await page.$('a[href*="SignOutOptions"], img[alt*="Google Account"], a[aria-label^="Google Account"]');
+        if (!accountIndicator) {
+          // Возможна 2FA / подтверждение устройства
+          const need2fa = await page.$('div[id*="challenge"], div[data-challengetype], input[name="idvAnyPhonePin"]');
+          if (need2fa) {
+            throw new Error('Требуется 2FA/подтверждение устройства для входа в Google. Автоматизация 2FA не поддерживается.');
+          }
+          throw new Error('Не удалось подтвердить вход в Google');
+        }
+      }
+
+    } finally {
+      await page.close().catch(() => {});
     }
   }
 
@@ -940,6 +1085,9 @@ class FormAutomator {
       await this.browser.close();
       this.browser = null;
     }
+    
+    // Закрываем все профили браузера
+    await this.profileManager.closeAllBrowsers();
   }
 }
 

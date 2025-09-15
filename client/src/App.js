@@ -9,6 +9,7 @@ import NotificationSystem from './components/NotificationSystem';
 import Dashboard from './pages/Dashboard';
 import Forms from './pages/Forms';
 import Accounts from './pages/Accounts';
+import Proxies from './pages/Proxies';
 import Automation from './pages/Automation';
 import Results from './pages/Results';
 
@@ -32,13 +33,14 @@ function App() {
         <Box sx={{ display: 'flex', flexDirection: 'column', minHeight: '100vh' }}>
           <Navbar />
           <Box component="main" sx={{ flexGrow: 1, p: 3 }}>
-            <Routes>
-              <Route path="/" element={<Dashboard />} />
-              <Route path="/forms" element={<Forms />} />
-              <Route path="/accounts" element={<Accounts />} />
-              <Route path="/automation" element={<Automation />} />
-              <Route path="/results" element={<Results />} />
-            </Routes>
+                <Routes>
+                  <Route path="/" element={<Dashboard />} />
+                  <Route path="/forms" element={<Forms />} />
+                  <Route path="/accounts" element={<Accounts />} />
+                  <Route path="/proxies" element={<Proxies />} />
+                  <Route path="/automation" element={<Automation />} />
+                  <Route path="/results" element={<Results />} />
+                </Routes>
           </Box>
           <NotificationSystem />
         </Box>

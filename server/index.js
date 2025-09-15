@@ -14,6 +14,7 @@ app.use(express.static(path.join(__dirname, '../client/build')));
 // Routes
 app.use('/api/forms', require('./routes/forms'));
 app.use('/api/accounts', require('./routes/accounts'));
+app.use('/api/proxies', require('./routes/proxies'));
 app.use('/api/automation', require('./routes/automation'));
 app.use('/api/notifications', require('./routes/notifications'));
 

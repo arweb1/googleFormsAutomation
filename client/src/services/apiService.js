@@ -50,6 +50,19 @@ export const apiService = {
     delete: (id) => api.delete(`/accounts/${id}`),
   },
 
+  // Proxies API
+  proxies: {
+    getAll: () => api.get('/proxies'),
+    getById: (id) => api.get(`/proxies/${id}`),
+    getGroups: () => api.get('/proxies/groups'),
+    getByGroup: (group) => api.get(`/proxies/group/${group}`),
+    create: (proxy) => api.post('/proxies', proxy),
+    update: (id, proxy) => api.put(`/proxies/${id}`, proxy),
+    delete: (id) => api.delete(`/proxies/${id}`),
+    deleteGroup: (group) => api.delete(`/proxies/group/${group}`),
+    bulkCreate: (data) => api.post('/proxies/bulk', data),
+  },
+
   // Automation API
   automation: {
     start: (formConfigId, accountIds, options) => 

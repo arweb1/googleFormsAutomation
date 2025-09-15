@@ -35,12 +35,14 @@ import AutomationProgress from '../components/AutomationProgress';
 const Automation = () => {
   const [forms, setForms] = useState([]);
   const [accounts, setAccounts] = useState([]);
+  const [proxyGroups, setProxyGroups] = useState([]);
   const [jobs, setJobs] = useState([]);
   const [activeJob, setActiveJob] = useState(null);
   const [jobLogs, setJobLogs] = useState([]);
   const [loading, setLoading] = useState(true);
   const [selectedForm, setSelectedForm] = useState('');
   const [selectedAccounts, setSelectedAccounts] = useState([]);
+  const [selectedProxyGroup, setSelectedProxyGroup] = useState('');
   const [loginMode, setLoginMode] = useState('anonymous'); // 'google' или 'anonymous'
   const [accountData, setAccountData] = useState([]);
   const [options, setOptions] = useState({
@@ -48,6 +50,7 @@ const Automation = () => {
     submit: true,
     headless: false
   });
+  
   
   // Настройки задержки между сабмитами
   const [delaySettings, setDelaySettings] = useState({
@@ -71,14 +74,16 @@ const Automation = () => {
   const loadData = async () => {
     try {
       setLoading(true);
-      const [formsResponse, accountsResponse, jobsResponse] = await Promise.all([
+      const [formsResponse, accountsResponse, proxyGroupsResponse, jobsResponse] = await Promise.all([
         apiService.forms.getConfigs(),
         apiService.accounts.getAll(),
+        apiService.proxies.getGroups(),
         apiService.automation.getAllJobs()
       ]);
       
       setForms(formsResponse.data.data || []);
       setAccounts(accountsResponse.data.data || []);
+      setProxyGroups(proxyGroupsResponse.data.data || []);
       setJobs(jobsResponse.data.data || []);
     } catch (error) {
       setError('Ошибка загрузки данных: ' + error.message);
@@ -206,6 +211,11 @@ const Automation = () => {
       return;
     }
 
+    if (loginMode === 'google' && !selectedProxyGroup) {
+      setError('Выберите группу прокси для режима с логином');
+      return;
+    }
+
     if (accountData.length === 0) {
       setError('Нет данных для заполнения');
       return;
@@ -219,7 +229,8 @@ const Automation = () => {
         ...options,
         loginMode: loginMode,
         accountData: accountData,
-        delaySettings: delaySettings
+        delaySettings: delaySettings,
+        selectedProxyGroup: selectedProxyGroup
       };
       
       const response = await apiService.automation.start(
@@ -398,6 +409,24 @@ const Automation = () => {
                       {accounts.map((account) => (
                         <MenuItem key={account.id} value={account.id}>
                           {account.email}
+                        </MenuItem>
+                      ))}
+                    </Select>
+                  </FormControl>
+                )}
+
+                {/* Выбор группы прокси (только для режима с логином) */}
+                {loginMode === 'google' && (
+                  <FormControl fullWidth sx={{ mb: 2 }}>
+                    <InputLabel>Выберите группу прокси</InputLabel>
+                    <Select
+                      value={selectedProxyGroup}
+                      onChange={(e) => setSelectedProxyGroup(e.target.value)}
+                      label="Выберите группу прокси"
+                    >
+                      {proxyGroups.map((group) => (
+                        <MenuItem key={group} value={group}>
+                          {group}
                         </MenuItem>
                       ))}
                     </Select>
@@ -705,6 +734,7 @@ const Automation = () => {
             label="Скрытый режим браузера"
             sx={{ mb: 3 }}
           />
+
 
           {/* Настройки задержки между сабмитами */}
           <Typography variant="h6" sx={{ mb: 2 }}>

@@ -13,6 +13,7 @@ import {
   Dashboard as DashboardIcon,
   Description as FormsIcon,
   People as AccountsIcon,
+  Cloud as ProxiesIcon,
   PlayArrow as AutomationIcon,
   Assessment as ResultsIcon,
   Menu as MenuIcon
@@ -36,6 +37,7 @@ const Navbar = () => {
     { path: '/', label: 'Главная', icon: <DashboardIcon /> },
     { path: '/forms', label: 'Формы', icon: <FormsIcon /> },
     { path: '/accounts', label: 'Аккаунты', icon: <AccountsIcon /> },
+    { path: '/proxies', label: 'Прокси', icon: <ProxiesIcon /> },
     { path: '/automation', label: 'Автоматизация', icon: <AutomationIcon /> },
     { path: '/results', label: 'Результаты', icon: <ResultsIcon /> }
   ];
