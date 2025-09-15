@@ -129,4 +129,23 @@ router.get('/jobs', async (req, res) => {
   }
 });
 
+// Очистка истории задач
+router.delete('/clear-history', async (req, res) => {
+  try {
+    const automator = new FormAutomator();
+    await automator.clearHistory();
+    
+    res.json({
+      success: true,
+      message: 'История задач очищена'
+    });
+  } catch (error) {
+    console.error('Ошибка очистки истории:', error);
+    res.status(500).json({ 
+      error: 'Ошибка при очистке истории',
+      details: error.message 
+    });
+  }
+});
+
 module.exports = router;

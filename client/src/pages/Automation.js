@@ -289,6 +289,18 @@ const Automation = () => {
     }
   };
 
+  const handleClearHistory = async () => {
+    if (window.confirm('Вы уверены, что хотите очистить всю историю задач? Это действие нельзя отменить.')) {
+      try {
+        await apiService.automation.clearHistory();
+        await loadJobs();
+        setError(null);
+      } catch (error) {
+        setError('Ошибка очистки истории: ' + error.message);
+      }
+    }
+  };
+
   const getStatusColor = (status) => {
     switch (status) {
       case 'running': return 'warning';
@@ -577,13 +589,24 @@ const Automation = () => {
                   <Typography variant="h6">
                     Задачи автоматизации
                   </Typography>
-                  <Button
-                    startIcon={<RefreshIcon />}
-                    onClick={loadJobs}
-                    size="small"
-                  >
-                    Обновить
-                  </Button>
+                  <Box sx={{ display: 'flex', gap: 1 }}>
+                    <Button
+                      startIcon={<RefreshIcon />}
+                      onClick={loadJobs}
+                      size="small"
+                    >
+                      Обновить
+                    </Button>
+                    <Button
+                      variant="outlined"
+                      color="error"
+                      onClick={handleClearHistory}
+                      size="small"
+                      disabled={jobs.length === 0}
+                    >
+                      Очистить историю
+                    </Button>
+                  </Box>
                 </Box>
 
                 {jobs.length === 0 ? (
@@ -598,7 +621,7 @@ const Automation = () => {
                           <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                             <Box>
                               <Typography variant="subtitle1">
-                                Задача #{job.id.slice(-8)}
+                                {job.name || `Задача #${job.id.slice(-8)}`}
                               </Typography>
                               <Typography variant="body2" color="text.secondary">
                                 Начата: {new Date(job.startTime).toLocaleString('ru-RU')}

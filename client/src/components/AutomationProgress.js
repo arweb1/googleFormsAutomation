@@ -89,7 +89,7 @@ const AutomationProgress = ({ job, logs = [] }) => {
       <CardContent>
         <Box display="flex" alignItems="center" justifyContent="space-between" mb={2}>
           <Typography variant="h6" component="div">
-            Прогресс автоматизации
+            {job.name || 'Прогресс автоматизации'}
           </Typography>
           <Chip
             icon={getStatusIcon(job.status)}

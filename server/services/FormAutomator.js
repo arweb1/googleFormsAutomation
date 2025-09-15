@@ -80,10 +80,14 @@ class FormAutomator {
         });
       }
 
+      // Создаем понятное название задачи
+      const taskName = `${formConfig.title || 'Без названия'} - ${accounts.length} аккаунтов (${options.loginMode === 'google' ? 'с логином' : 'анонимно'})`;
+      
       // Создаем задачу в базе данных
       console.log(`💾 Создание задачи в базе данных...`);
       const job = await this.jobModel.create({
         id: jobId,
+        name: taskName,
         formConfigId,
         formTitle: formConfig.title,
         status: 'running',
@@ -853,6 +857,17 @@ class FormAutomator {
         
       default:
         return 3000; // По умолчанию 3 секунды
+    }
+  }
+
+  // Очистка истории задач
+  async clearHistory() {
+    try {
+      await this.jobModel.clearAll();
+      console.log('✅ История задач автоматизации очищена');
+    } catch (error) {
+      console.error('❌ Ошибка очистки истории задач:', error);
+      throw error;
     }
   }
 

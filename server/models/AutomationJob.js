@@ -110,6 +110,18 @@ class AutomationJob {
       await this.update(jobId, { results: job.results });
     }
   }
+
+  // Очистка всех задач
+  async clearAll() {
+    try {
+      await this.ensureDataDirectory();
+      await fs.writeFile(this.jobsFile, JSON.stringify([], null, 2));
+      console.log('✅ Все задачи автоматизации удалены');
+    } catch (error) {
+      console.error('❌ Ошибка очистки задач:', error);
+      throw error;
+    }
+  }
 }
 
 module.exports = AutomationJob;

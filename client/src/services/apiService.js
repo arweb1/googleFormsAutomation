@@ -58,6 +58,7 @@ export const apiService = {
     stop: (jobId) => api.post(`/automation/stop/${jobId}`),
     getResults: (jobId) => api.get(`/automation/results/${jobId}`),
     getAllJobs: () => api.get('/automation/jobs'),
+    clearHistory: () => api.delete('/automation/clear-history'),
   },
 
   // Общие методы
