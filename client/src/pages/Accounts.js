@@ -29,7 +29,8 @@ import {
   Upload as UploadIcon,
   Edit as EditIcon,
   Delete as DeleteIcon,
-  Search as SearchIcon
+  Search as SearchIcon,
+  CloudUpload as CloudUploadIcon
 } from '@mui/icons-material';
 import { apiService } from '../services/apiService';
 
@@ -47,6 +48,9 @@ const Accounts = () => {
   const [error, setError] = useState(null);
   const [page, setPage] = useState(0);
   const [rowsPerPage, setRowsPerPage] = useState(10);
+  const [openBulkDialog, setOpenBulkDialog] = useState(false);
+  const [bulkText, setBulkText] = useState('');
+  const [bulkLoading, setBulkLoading] = useState(false);
 
   useEffect(() => {
     loadAccounts();
@@ -107,6 +111,88 @@ const Accounts = () => {
       setNewAccount({ email: '', password: '', data: {} });
     } catch (error) {
       setError('Ошибка обновления аккаунта: ' + error.message);
+    }
+  };
+
+  const parseBulkAccounts = (text) => {
+    const lines = text.split('\n').filter(line => line.trim());
+    const accountsData = [];
+    const errors = [];
+
+    lines.forEach((line, index) => {
+      const trimmedLine = line.trim();
+      if (!trimmedLine) return;
+
+      // Поддерживаем форматы: "почта;пароль" и "почта;пароль;резервная_почта"
+      const parts = trimmedLine.split(';').map(part => part.trim());
+      
+      if (parts.length < 2) {
+        errors.push(`Строка ${index + 1}: Недостаточно данных. Ожидается формат "почта;пароль" или "почта;пароль;резервная_почта"`);
+        return;
+      }
+
+      const email = parts[0];
+      const password = parts[1];
+      const backupEmail = parts[2] || null;
+
+      // Валидация email
+      const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+      if (!emailRegex.test(email)) {
+        errors.push(`Строка ${index + 1}: Неверный формат email: ${email}`);
+        return;
+      }
+
+      if (!password) {
+        errors.push(`Строка ${index + 1}: Пароль не может быть пустым`);
+        return;
+      }
+
+      const account = {
+        email: email,
+        password: password,
+        data: {}
+      };
+
+      // Добавляем резервную почту в дополнительные данные, если она есть
+      if (backupEmail && emailRegex.test(backupEmail)) {
+        account.data.backupEmail = backupEmail;
+      } else if (backupEmail) {
+        errors.push(`Строка ${index + 1}: Неверный формат резервной почты: ${backupEmail}`);
+        return;
+      }
+
+      accountsData.push(account);
+    });
+
+    return { accountsData, errors };
+  };
+
+  const handleBulkAdd = async () => {
+    try {
+      setBulkLoading(true);
+      setError(null);
+
+      const { accountsData, errors } = parseBulkAccounts(bulkText);
+
+      if (errors.length > 0) {
+        setError(`Ошибки валидации:\n${errors.join('\n')}`);
+        return;
+      }
+
+      if (accountsData.length === 0) {
+        setError('Не найдено валидных аккаунтов для добавления');
+        return;
+      }
+
+      await apiService.accounts.upload(accountsData);
+      await loadAccounts();
+      setOpenBulkDialog(false);
+      setBulkText('');
+      setError(null);
+    } catch (error) {
+      setError('Ошибка массового добавления аккаунтов: ' + error.message);
+    } finally {
+      setBulkLoading(false);
     }
   };
 
@@ -197,6 +283,16 @@ const Accounts = () => {
                 hidden
                 onChange={handleFileUpload}
               />
+            </Button>
+            <Button
+              variant="outlined"
+              startIcon={<CloudUploadIcon />}
+              onClick={() => {
+                setBulkText('');
+                setOpenBulkDialog(true);
+              }}
+            >
+              Массовое добавление
             </Button>
             <Button
               variant="contained"
@@ -357,6 +453,52 @@ const Accounts = () => {
             startIcon={<AddIcon />}
           >
             {selectedAccount ? 'Обновить' : 'Добавить'}
+          </Button>
+        </DialogActions>
+      </Dialog>
+
+      {/* Диалог массового добавления аккаунтов */}
+      <Dialog open={openBulkDialog} onClose={() => setOpenBulkDialog(false)} maxWidth="md" fullWidth>
+        <DialogTitle>
+          Массовое добавление Google аккаунтов
+        </DialogTitle>
+        <DialogContent>
+          <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+            Введите данные аккаунтов в формате:<br/>
+            <strong>почта;пароль</strong> или <strong>почта;пароль;резервная_почта</strong><br/>
+            Каждый аккаунт на новой строке.
+          </Typography>
+          <TextField
+            autoFocus
+            multiline
+            rows={12}
+            fullWidth
+            variant="outlined"
+            placeholder={`Пример:
+attractcynthia70062@cccfd.cfd;AKA999aka;attractcynthia70062@gmail.com
+user2@example.com;password123
+user3@example.com;mypassword;backup@example.com`}
+            value={bulkText}
+            onChange={(e) => setBulkText(e.target.value)}
+            sx={{ mt: 1 }}
+          />
+          {bulkText && (
+            <Box sx={{ mt: 2 }}>
+              <Typography variant="body2" color="text.secondary">
+                Найдено строк: {bulkText.split('\n').filter(line => line.trim()).length}
+              </Typography>
+            </Box>
+          )}
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setOpenBulkDialog(false)}>Отмена</Button>
+          <Button
+            onClick={handleBulkAdd}
+            variant="contained"
+            startIcon={<CloudUploadIcon />}
+            disabled={bulkLoading || !bulkText.trim()}
+          >
+            {bulkLoading ? <CircularProgress size={20} /> : 'Добавить аккаунты'}
           </Button>
         </DialogActions>
       </Dialog>

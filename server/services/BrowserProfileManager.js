@@ -32,6 +32,9 @@ class BrowserProfileManager {
   }
 
   async launchBrowserWithProfile(accountId, options = {}, proxySettings = null) {
+    // Очищаем старый профиль перед созданием нового
+    await this.cleanupProfile(accountId);
+    
     const profilePath = await this.createProfile(accountId, proxySettings);
     
         const launchOptions = {

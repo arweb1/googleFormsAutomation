@@ -27,7 +27,8 @@ import {
   PlayArrow as PlayIcon,
   Stop as StopIcon,
   Refresh as RefreshIcon,
-  Settings as SettingsIcon
+  Settings as SettingsIcon,
+  Download as DownloadIcon
 } from '@mui/icons-material';
 import { apiService } from '../services/apiService';
 import AutomationProgress from '../components/AutomationProgress';
@@ -130,45 +131,92 @@ const Automation = () => {
     setAccountData(newAccountData);
   };
 
+  const generateCsvTemplate = () => {
+    const form = forms.find(f => f.id === selectedForm);
+    if (!form || !form.fields) {
+      setError('Выберите форму для генерации шаблона');
+      return;
+    }
+
+    // Создаем заголовки CSV на основе полей формы
+    const headers = ['account_name', ...form.fields.map(field => field.title || field.id)];
+    
+    // Создаем примеры данных
+    const exampleRows = [
+      ['Аккаунт 1', ...form.fields.map(field => `Пример_${field.id}`)],
+      ['Аккаунт 2', ...form.fields.map(field => `Пример_${field.id}_2`)],
+      ['Аккаунт 3', ...form.fields.map(field => `Пример_${field.id}_3`)]
+    ];
+
+    // Генерируем CSV содержимое
+    const csvContent = [
+      headers.join(','),
+      ...exampleRows.map(row => row.join(','))
+    ].join('\n');
+
+    // Создаем и скачиваем файл
+    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+    const link = document.createElement('a');
+    const url = URL.createObjectURL(blob);
+    link.setAttribute('href', url);
+    link.setAttribute('download', `template_${form.title || 'form'}.csv`);
+    link.style.visibility = 'hidden';
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+  };
+
   const handleCsvImport = (event) => {
     const file = event.target.files[0];
     if (!file) return;
     
     const reader = new FileReader();
     reader.onload = (e) => {
-      const csvText = e.target.result;
-      const lines = csvText.split('\n');
-      const headers = lines[0].split(',').map(h => h.trim());
-      
-      const data = [];
-      for (let i = 1; i < lines.length; i++) {
-        if (lines[i].trim()) {
-          const values = lines[i].split(',').map(v => v.trim());
-          const row = {};
-          headers.forEach((header, index) => {
-            row[header] = values[index] || '';
-          });
-          data.push(row);
+      try {
+        const csvText = e.target.result;
+        const lines = csvText.split('\n').filter(line => line.trim());
+        const headers = lines[0].split(',').map(h => h.trim());
+        
+        const data = [];
+        for (let i = 1; i < lines.length; i++) {
+          if (lines[i].trim()) {
+            const values = lines[i].split(',').map(v => v.trim());
+            const row = {};
+            headers.forEach((header, index) => {
+              row[header] = values[index] || '';
+            });
+            data.push(row);
+          }
         }
-      }
-      
-      // Автоматически создаем аккаунты на основе CSV данных
-      const form = forms.find(f => f.id === selectedForm);
-      if (form && form.fields) {
+        
+        // Автоматически создаем аккаунты на основе CSV данных
+        const form = forms.find(f => f.id === selectedForm);
+        if (!form || !form.fields) {
+          setError('Выберите форму перед импортом CSV');
+          return;
+        }
+
         const accountDataFromCsv = data.map((row, index) => {
           const account = {
-            id: `account_${index + 1}`,
-            name: `Аккаунт ${index + 1}`,
+            id: `account_${accountData.length + index + 1}`,
+            name: row.account_name || `Аккаунт ${accountData.length + index + 1}`,
             fields: {}
           };
           
           // Сопоставляем CSV колонки с полями формы
           form.fields.forEach(field => {
-            // Ищем соответствующую колонку в CSV
-            const csvColumn = headers.find(header => 
-              header.toLowerCase().includes(field.title.toLowerCase()) ||
-              header.toLowerCase().includes(field.id.toLowerCase())
+            // Сначала ищем точное совпадение по названию поля
+            let csvColumn = headers.find(header => 
+              header.toLowerCase() === (field.title || field.id).toLowerCase()
             );
+            
+            // Если точного совпадения нет, ищем частичное совпадение
+            if (!csvColumn) {
+              csvColumn = headers.find(header => 
+                header.toLowerCase().includes((field.title || field.id).toLowerCase()) ||
+                (field.title || field.id).toLowerCase().includes(header.toLowerCase())
+              );
+            }
             
             if (csvColumn && row[csvColumn]) {
               account.fields[field.id] = row[csvColumn];
@@ -180,7 +228,10 @@ const Automation = () => {
           return account;
         });
         
-        setAccountData(accountDataFromCsv);
+        setAccountData([...accountData, ...accountDataFromCsv]);
+        setError(null);
+      } catch (error) {
+        setError('Ошибка при обработке CSV файла: ' + error.message);
       }
     };
     
@@ -191,6 +242,16 @@ const Automation = () => {
     setLoginMode(event.target.value);
     if (event.target.value === 'anonymous') {
       setSelectedAccounts([]);
+    }
+  };
+
+  const handleSelectAllAccounts = () => {
+    if (selectedAccounts.length === accounts.length) {
+      // Если все выбраны, снимаем выбор со всех
+      setSelectedAccounts([]);
+    } else {
+      // Выбираем все аккаунты
+      setSelectedAccounts(accounts.map(account => account.id));
     }
   };
 
@@ -388,31 +449,46 @@ const Automation = () => {
 
                 {/* Выбор Google аккаунтов (только для режима с логином) */}
                 {loginMode === 'google' && (
-                  <FormControl fullWidth sx={{ mb: 2 }}>
-                    <InputLabel>Выберите Google аккаунты</InputLabel>
-                    <Select
-                      multiple
-                      value={selectedAccounts}
-                      onChange={(e) => setSelectedAccounts(e.target.value)}
-                      label="Выберите Google аккаунты"
-                      renderValue={(selected) => (
-                        <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 0.5 }}>
-                          {selected.map((value) => {
-                            const account = accounts.find(acc => acc.id === value);
-                            return (
-                              <Chip key={value} label={account?.email || value} size="small" />
-                            );
-                          })}
-                        </Box>
-                      )}
-                    >
-                      {accounts.map((account) => (
-                        <MenuItem key={account.id} value={account.id}>
-                          {account.email}
-                        </MenuItem>
-                      ))}
-                    </Select>
-                  </FormControl>
+                  <Box sx={{ mb: 2 }}>
+                    <Box sx={{ display: 'flex', gap: 1, mb: 1 }}>
+                      <FormControl fullWidth>
+                        <InputLabel>Выберите Google аккаунты</InputLabel>
+                        <Select
+                          multiple
+                          value={selectedAccounts}
+                          onChange={(e) => setSelectedAccounts(e.target.value)}
+                          label="Выберите Google аккаунты"
+                          renderValue={(selected) => (
+                            <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 0.5 }}>
+                              {selected.map((value) => {
+                                const account = accounts.find(acc => acc.id === value);
+                                return (
+                                  <Chip key={value} label={account?.email || value} size="small" />
+                                );
+                              })}
+                            </Box>
+                          )}
+                        >
+                          {accounts.map((account) => (
+                            <MenuItem key={account.id} value={account.id}>
+                              {account.email}
+                            </MenuItem>
+                          ))}
+                        </Select>
+                      </FormControl>
+                      <Button
+                        variant="outlined"
+                        size="small"
+                        onClick={handleSelectAllAccounts}
+                        sx={{ minWidth: 'auto', px: 2 }}
+                      >
+                        {selectedAccounts.length === accounts.length ? 'Снять все' : 'Выбрать все'}
+                      </Button>
+                    </Box>
+                    <Typography variant="caption" color="text.secondary">
+                      Выбрано: {selectedAccounts.length} из {accounts.length} аккаунтов
+                    </Typography>
+                  </Box>
                 )}
 
                 {/* Выбор группы прокси (только для режима с логином) */}
@@ -454,6 +530,15 @@ const Automation = () => {
                             hidden
                             onChange={handleCsvImport}
                           />
+                        </Button>
+                        <Button
+                          variant="outlined"
+                          size="small"
+                          onClick={generateCsvTemplate}
+                          startIcon={<DownloadIcon />}
+                          disabled={!selectedForm}
+                        >
+                          Скачать шаблон
                         </Button>
                         <Button
                           variant="outlined"
