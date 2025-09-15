@@ -14,10 +14,26 @@ class FormAutomator {
 
   async initBrowser() {
     if (!this.browser) {
-      this.browser = await puppeteer.launch({
-        headless: false, // Показываем браузер для отладки
-        args: ['--no-sandbox', '--disable-setuid-sandbox']
-      });
+      try {
+        console.log(`🌐 Запуск браузера Puppeteer...`);
+        this.browser = await puppeteer.launch({
+          headless: false, // Показываем браузер для отладки
+          args: [
+            '--no-sandbox',
+            '--disable-setuid-sandbox',
+            '--disable-dev-shm-usage',
+            '--disable-accelerated-2d-canvas',
+            '--no-first-run',
+            '--no-zygote',
+            '--disable-gpu'
+          ],
+          timeout: 30000
+        });
+        console.log(`✅ Браузер успешно запущен`);
+      } catch (error) {
+        console.error(`❌ Ошибка запуска браузера:`, error);
+        throw error;
+      }
     }
     return this.browser;
   }
@@ -118,6 +134,12 @@ class FormAutomator {
       console.log(`🌐 Инициализация браузера...`);
       const browser = await this.initBrowser();
       console.log(`✅ Браузер инициализирован`);
+      
+      // Добавляем лог о начале обработки
+      await this.jobModel.addLog(jobId, {
+        type: 'info',
+        message: 'Браузер инициализирован, начинаем обработку аккаунтов'
+      });
       
       for (let i = 0; i < accounts.length; i++) {
         const account = accounts[i];
