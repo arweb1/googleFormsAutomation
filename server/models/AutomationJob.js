@@ -39,6 +39,7 @@ class AutomationJob {
     const jobs = await this.getAll();
     const job = {
       id: jobData.id,
+      name: jobData.name,
       formConfigId: jobData.formConfigId,
       formTitle: jobData.formTitle,
       status: jobData.status || 'pending',

@@ -203,7 +203,7 @@ const Results = () => {
                 <Table>
                   <TableHead>
                     <TableRow>
-                      <TableCell>ID задачи</TableCell>
+                      <TableCell>Название задачи</TableCell>
                       <TableCell>Статус</TableCell>
                       <TableCell>Начата</TableCell>
                       <TableCell>Завершена</TableCell>
@@ -217,9 +217,14 @@ const Results = () => {
                       .map((job) => (
                       <TableRow key={job.id}>
                         <TableCell>
-                          <Typography variant="body2" fontFamily="monospace">
-                            #{job.id.slice(-8)}
+                          <Typography variant="body2">
+                            {job.name || `Задача #${job.id.slice(-8)}`}
                           </Typography>
+                          {job.formTitle && (
+                            <Typography variant="caption" color="text.secondary">
+                              {job.formTitle}
+                            </Typography>
+                          )}
                         </TableCell>
                         <TableCell>
                           <Chip
@@ -308,6 +313,11 @@ const Results = () => {
                 </Grid>
                 <Grid item xs={6}>
                   <Typography variant="body2" color="text.secondary">
+                    Режим: {selectedJob.loginMode === 'google' ? 'С логином Google' : 'Анонимно'}
+                  </Typography>
+                </Grid>
+                <Grid item xs={6}>
+                  <Typography variant="body2" color="text.secondary">
                     Начата: {new Date(selectedJob.startTime).toLocaleString('ru-RU')}
                   </Typography>
                 </Grid>
@@ -318,13 +328,16 @@ const Results = () => {
                     </Typography>
                   </Grid>
                 )}
-                {selectedJob.progress && (
-                  <Grid item xs={6}>
-                    <Typography variant="body2" color="text.secondary">
-                      Прогресс: {selectedJob.progress.completed} / {selectedJob.progress.total}
-                    </Typography>
-                  </Grid>
-                )}
+                <Grid item xs={6}>
+                  <Typography variant="body2" color="text.secondary">
+                    Аккаунтов: {selectedJob.totalAccounts}
+                  </Typography>
+                </Grid>
+                <Grid item xs={6}>
+                  <Typography variant="body2" color="text.secondary">
+                    Успешно: {selectedJob.completedAccounts} | Ошибок: {selectedJob.failedAccounts}
+                  </Typography>
+                </Grid>
               </Grid>
 
               <Typography variant="h6" gutterBottom>
@@ -340,34 +353,34 @@ const Results = () => {
                   <Table size="small">
                     <TableHead>
                       <TableRow>
-                        <TableCell>Email</TableCell>
+                        <TableCell>Аккаунт</TableCell>
                         <TableCell>Статус</TableCell>
-                        <TableCell>Время</TableCell>
-                        <TableCell>Детали</TableCell>
+                        <TableCell>Время отправки</TableCell>
+                        <TableCell>Ошибка</TableCell>
                       </TableRow>
                     </TableHead>
                     <TableBody>
                       {results.map((result, index) => (
                         <TableRow key={index}>
-                          <TableCell>{result.email}</TableCell>
+                          <TableCell>
+                            <Typography variant="body2">
+                              {result.accountId || `Аккаунт ${index + 1}`}
+                            </Typography>
+                          </TableCell>
                           <TableCell>
                             <Chip
-                              label={getStatusText(result.status)}
-                              color={getStatusColor(result.status)}
+                              label={result.success ? 'Успешно' : 'Ошибка'}
+                              color={result.success ? 'success' : 'error'}
                               size="small"
                             />
                           </TableCell>
                           <TableCell>
-                            {new Date(result.timestamp).toLocaleString('ru-RU')}
+                            {result.submittedAt ? new Date(result.submittedAt).toLocaleString('ru-RU') : '-'}
                           </TableCell>
                           <TableCell>
                             {result.error ? (
                               <Typography variant="caption" color="error">
                                 {result.error}
-                              </Typography>
-                            ) : result.data ? (
-                              <Typography variant="caption" color="success">
-                                Успешно отправлено
                               </Typography>
                             ) : '-'}
                           </TableCell>
