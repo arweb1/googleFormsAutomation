@@ -630,7 +630,6 @@ class FormAutomator {
     try {
       console.log(`\n🚀 Начинаем заполнение формы для аккаунта: ${account.name}`);
       console.log(`📝 URL формы: ${formConfig.url}`);
-      console.log(`📊 Количество полей: ${formConfig.fields.length}`);
       
       // Устанавливаем User-Agent
       await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36');
@@ -659,8 +658,36 @@ class FormAutomator {
       // Отправляем форму
       if (options.submit !== false) {
         console.log('📤 Отправляем форму...');
-        // Небольшая задержка перед отправкой
-        await page.waitForTimeout(1000);
+        
+        // Ждем полной загрузки формы перед отправкой
+        console.log('⏳ Ждем полной загрузки формы...');
+        await page.waitForTimeout(3000);
+        
+        // Проверяем, что все поля заполнены
+        const formReady = await page.evaluate(() => {
+          const inputs = document.querySelectorAll('input, textarea, select');
+          let filledCount = 0;
+          let totalCount = 0;
+          
+          inputs.forEach(input => {
+            if (input.type !== 'hidden' && input.type !== 'submit' && input.type !== 'button') {
+              totalCount++;
+              if (input.value && input.value.trim() !== '') {
+                filledCount++;
+              }
+            }
+          });
+          
+          console.log(`Заполнено полей: ${filledCount}/${totalCount}`);
+          return filledCount > 0;
+        });
+        
+        if (formReady) {
+          console.log('✅ Форма готова к отправке');
+        } else {
+          console.log('⚠️ Форма может быть не готова, но продолжаем...');
+        }
+        
         await this.submitForm(page, formConfig);
       }
       
@@ -873,15 +900,268 @@ class FormAutomator {
 
   async fillCheckboxField(page, field, account) {
     const values = this.getValueForField(field, account);
-    if (!values) {
-      console.log(`Пропускаем чекбокс ${field.title} - нет значения`);
-      return;
-    }
+    
+      // Для чекбоксов значение может быть false (не отмечен) или пустая строка, что является валидным
+      if (values === undefined || values === null || values === '') {
+        console.log(`Пропускаем чекбокс ${field.title} - нет значения (${values})`);
+        return;
+      }
 
     console.log(`Заполняем чекбокс ${field.title} значениями:`, values);
 
     try {
-      // Преобразуем значение в массив если это строка
+      // Если значение boolean (true/false), обрабатываем как простой чекбокс
+      if (typeof values === 'boolean') {
+        if (values === true) {
+          console.log(`🔍 Ищем чекбокс для поля "${field.title}"...`);
+          
+          // Также попробуем найти все элементы с текстом, содержащим ключевые слова
+          const textElements = await page.evaluate((searchText) => {
+            const elements = [];
+            const allElements = document.querySelectorAll('*');
+            allElements.forEach((el, index) => {
+              const text = el.textContent || el.innerText;
+              if (text && text.toLowerCase().includes(searchText.toLowerCase())) {
+                elements.push({
+                  index,
+                  tagName: el.tagName,
+                  text: text.substring(0, 100),
+                  className: el.className,
+                  id: el.id,
+                  ariaLabel: el.getAttribute('aria-label'),
+                  outerHTML: el.outerHTML.substring(0, 200)
+                });
+              }
+            });
+            return elements;
+          }, field.title);
+          
+          // Попробуем найти элементы по английским переводам
+          const englishTranslations = await page.evaluate(() => {
+            const elements = [];
+            const allElements = document.querySelectorAll('*');
+            
+            // Словарь переводов для чекбоксов
+            const translations = {
+              'указати у відповіді мою електронну адресу': ['record', 'email', 'response', 'include'],
+              'надіслати мені копію моїх відповідей': ['send', 'copy', 'responses', 'me']
+            };
+            
+            allElements.forEach((el, index) => {
+              const text = el.textContent || el.innerText;
+              const ariaLabel = el.getAttribute('aria-label');
+              const fullText = (text + ' ' + (ariaLabel || '')).toLowerCase();
+              
+              // Проверяем каждую пару переводов
+              Object.entries(translations).forEach(([ukrainian, englishWords]) => {
+                const matchedWords = englishWords.filter(word => fullText.includes(word));
+                if (matchedWords.length >= 2) { // Если совпало минимум 2 слова
+                  elements.push({
+                    index,
+                    tagName: el.tagName,
+                    text: text.substring(0, 100),
+                    className: el.className,
+                    id: el.id,
+                    ariaLabel: ariaLabel,
+                    matchedWords,
+                    ukrainianPhrase: ukrainian,
+                    outerHTML: el.outerHTML.substring(0, 200)
+                  });
+                }
+              });
+            });
+            return elements;
+          });
+          
+          console.log(`📋 Элементы с текстом "${field.title}":`, JSON.stringify(textElements, null, 2));
+          console.log(`📋 Элементы с английскими переводами:`, JSON.stringify(englishTranslations, null, 2));
+          
+          // Дополнительно попробуем найти элементы с похожими словами
+          const similarElements = await page.evaluate((searchText) => {
+            const elements = [];
+            const keywords = searchText.toLowerCase().split(' ').filter(word => word.length > 3);
+            const allElements = document.querySelectorAll('*');
+            
+            allElements.forEach((el, index) => {
+              const text = el.textContent || el.innerText;
+              if (text) {
+                const textLower = text.toLowerCase();
+                const matchedKeywords = keywords.filter(keyword => textLower.includes(keyword));
+                if (matchedKeywords.length > 0) {
+                  elements.push({
+                    index,
+                    tagName: el.tagName,
+                    text: text.substring(0, 100),
+                    className: el.className,
+                    id: el.id,
+                    ariaLabel: el.getAttribute('aria-label'),
+                    matchedKeywords,
+                    outerHTML: el.outerHTML.substring(0, 200)
+                  });
+                }
+              }
+            });
+            return elements;
+          }, field.title);
+          
+          
+          // Ищем чекбокс по различным селекторам
+          const selectors = [
+            `[role="checkbox"]`,
+            `[aria-label*="${field.title}"]`,
+            `input[type="checkbox"]`,
+            `input[name="${field.name}"]`,
+            `input[name="${field.id}"]`
+          ];
+          
+          let clicked = false;
+          for (const selector of selectors) {
+            try {
+              const elements = await page.$$(selector);
+              
+              if (elements.length > 0) {
+                // Ищем элемент с нужным aria-label или названием
+                for (let i = 0; i < elements.length; i++) {
+                  const element = elements[i];
+                  const ariaLabel = await page.evaluate(el => el.getAttribute('aria-label'), element);
+                  const isChecked = await page.evaluate(el => el.getAttribute('aria-checked'), element);
+                  const elementText = await page.evaluate(el => el.textContent || el.innerText, element);
+                  
+                  // Если элемент уже отмечен, пропускаем
+                  if (isChecked === 'true') {
+                    console.log(`✅ Чекбокс "${field.title}" уже отмечен`);
+                    clicked = true;
+                    break;
+                  }
+                  
+                  // Проверяем aria-label (частичное совпадение)
+                  if (ariaLabel && (
+                    ariaLabel.toLowerCase().includes(field.title.toLowerCase()) ||
+                    field.title.toLowerCase().includes(ariaLabel.toLowerCase())
+                  )) {
+                    await element.click();
+                    console.log(`✅ Чекбокс "${field.title}" отмечен по aria-label`);
+                    clicked = true;
+                    break;
+                  }
+                  
+                  // Проверяем текст элемента
+                  if (elementText && (
+                    elementText.toLowerCase().includes(field.title.toLowerCase()) ||
+                    field.title.toLowerCase().includes(elementText.toLowerCase())
+                  )) {
+                    await element.click();
+                    console.log(`✅ Чекбокс "${field.title}" отмечен по тексту`);
+                    clicked = true;
+                    break;
+                  }
+                }
+                if (clicked) break;
+              }
+            } catch (error) {
+              console.log(`❌ Селектор ${selector} не сработал: ${error.message}`);
+              continue;
+            }
+          }
+          
+          if (!clicked) {
+            console.log(`❌ Не удалось отметить чекбокс "${field.title}"`);
+            
+            // Попробуем найти чекбокс по английским переводам
+            try {
+              console.log(`🔍 Пробуем найти чекбокс по английским переводам...`);
+              
+              // Определяем английские ключевые слова для текущего поля
+              let englishKeywords = [];
+              if (field.title.toLowerCase().includes('указати') && field.title.toLowerCase().includes('електронну')) {
+                englishKeywords = ['record', 'email', 'response', 'include'];
+              } else if (field.title.toLowerCase().includes('надіслати') && field.title.toLowerCase().includes('копію')) {
+                englishKeywords = ['send', 'copy', 'responses', 'me'];
+              }
+              
+              console.log(`🔍 Английские ключевые слова для "${field.title}":`, englishKeywords);
+              
+              const foundByEnglish = await page.evaluate((keywords) => {
+                // Ищем все элементы с role="checkbox" или input[type="checkbox"]
+                const checkboxes = document.querySelectorAll('[role="checkbox"], input[type="checkbox"]');
+                
+                for (let checkbox of checkboxes) {
+                  const ariaLabel = checkbox.getAttribute('aria-label');
+                  const parent = checkbox.parentElement;
+                  const parentText = parent ? parent.textContent || parent.innerText : '';
+                  const fullText = (ariaLabel + ' ' + parentText).toLowerCase();
+                  
+                  // Проверяем совпадение с английскими ключевыми словами
+                  const matchedKeywords = keywords.filter(keyword => fullText.includes(keyword));
+                  if (matchedKeywords.length >= 2) { // Если совпало минимум 2 слова
+                    return {
+                      found: true,
+                      method: 'english-translation',
+                      ariaLabel: ariaLabel,
+                      parentText: parentText.substring(0, 100),
+                      matchedKeywords: matchedKeywords,
+                      isChecked: checkbox.getAttribute('aria-checked')
+                    };
+                  }
+                }
+                
+                return { found: false };
+              }, englishKeywords);
+              
+              if (foundByEnglish.found) {
+                console.log(`✅ Найден чекбокс методом "${foundByEnglish.method}":`, foundByEnglish);
+                
+                // Кликаем по найденному чекбоксу
+                const checkboxElement = await page.evaluateHandle((keywords) => {
+                  const checkboxes = document.querySelectorAll('[role="checkbox"], input[type="checkbox"]');
+                  
+                  for (let checkbox of checkboxes) {
+                    const ariaLabel = checkbox.getAttribute('aria-label');
+                    const parent = checkbox.parentElement;
+                    const parentText = parent ? parent.textContent || parent.innerText : '';
+                    const fullText = (ariaLabel + ' ' + parentText).toLowerCase();
+                    
+                    const matchedKeywords = keywords.filter(keyword => fullText.includes(keyword));
+                    if (matchedKeywords.length >= 2) {
+                      return checkbox;
+                    }
+                  }
+                  return null;
+                }, englishKeywords);
+                
+                if (checkboxElement && checkboxElement.asElement) {
+                  await checkboxElement.asElement().click();
+                  console.log(`✅ Чекбокс "${field.title}" отмечен по английскому переводу`);
+                  clicked = true;
+                }
+              } else {
+                console.log(`❌ Чекбокс не найден даже по английскому переводу`);
+              }
+            } catch (textSearchError) {
+              console.log(`❌ Ошибка при поиске по тексту: ${textSearchError.message}`);
+            }
+            
+            // Попробуем кликнуть по первому найденному чекбоксу как fallback
+            if (!clicked) {
+              try {
+                const firstCheckbox = await page.$('[role="checkbox"], input[type="checkbox"]');
+                if (firstCheckbox) {
+                  await firstCheckbox.click();
+                  console.log(`⚠️ Кликнули по первому найденному чекбоксу как fallback`);
+                  clicked = true;
+                }
+              } catch (fallbackError) {
+                console.log(`❌ Fallback тоже не сработал: ${fallbackError.message}`);
+              }
+            }
+          }
+        } else {
+          console.log(`Чекбокс "${field.title}" не должен быть отмечен (значение: false)`);
+        }
+        return;
+      }
+
+      // Если значение массив или строка, обрабатываем как множественный выбор
       const valuesArray = Array.isArray(values) ? values : [values];
       
       for (const value of valuesArray) {
@@ -889,7 +1169,9 @@ class FormAutomator {
         const selectors = [
           `input[name="${field.name}"][value="${value}"]`,
           `input[name="${field.name}"][type="checkbox"]`,
-          `input[type="checkbox"]`
+          `input[type="checkbox"]`,
+          `[role="checkbox"]`,
+          `[aria-label*="${field.title}"]`
         ];
         
         let clicked = false;
@@ -900,7 +1182,17 @@ class FormAutomator {
               // Ищем элемент с нужным значением
               for (const element of elements) {
                 const elementValue = await page.evaluate(el => el.value, element);
-                if (elementValue === value || !value) {
+                const ariaLabel = await page.evaluate(el => el.getAttribute('aria-label'), element);
+                
+                // Для элементов с role="checkbox" проверяем aria-label
+                if (selector.includes('role="checkbox"') || selector.includes('aria-label')) {
+                  if (ariaLabel && ariaLabel.includes(field.title)) {
+                    await element.click();
+                    console.log(`✅ Чекбокс "${field.title}" отмечен`);
+                    clicked = true;
+                    break;
+                  }
+                } else if (elementValue === value || !value) {
                   await element.click();
                   console.log(`✅ Чекбокс "${value}" отмечен`);
                   clicked = true;
@@ -937,7 +1229,7 @@ class FormAutomator {
 
   getValueForField(field, account) {
     // Сначала проверяем пользовательские данные (если есть)
-    if (account.fields && account.fields[field.id]) {
+    if (account.fields && account.fields[field.id] !== undefined) {
       return account.fields[field.id];
     }
     
@@ -954,6 +1246,7 @@ class FormAutomator {
       value = field.defaultValue;
     }
     
+    console.log(`📋 Итоговое значение для поля ${field.title} (${field.id}):`, value, typeof value);
     return value;
   }
 
@@ -961,36 +1254,105 @@ class FormAutomator {
     console.log('Ищем кнопку отправки формы...');
     
     try {
+      
       // Используем page.evaluate для поиска кнопки отправки
       const submitButton = await page.evaluate(() => {
-        // Ищем кнопки с текстом Submit или Отправить
-        const buttons = Array.from(document.querySelectorAll('button, input[type="submit"], div[role="button"], span'));
-        
-        for (const button of buttons) {
-          const text = button.textContent?.toLowerCase() || '';
-          const ariaLabel = button.getAttribute('aria-label')?.toLowerCase() || '';
-          
-          if (text.includes('submit') || text.includes('отправить') || 
-              ariaLabel.includes('submit') || ariaLabel.includes('отправить')) {
-            return {
-              tagName: button.tagName,
-              className: button.className,
-              id: button.id,
-              text: button.textContent
-            };
-          }
-        }
-        
-        // Ищем кнопки с определенными классами Google Forms
-        const googleButtons = document.querySelectorAll('.freebirdFormviewerViewNavigationSubmitButton, [jsname="M2UYVd"], button[data-value="Submit"]');
+        // Сначала ищем настоящие кнопки с определенными классами Google Forms
+        const googleButtons = document.querySelectorAll('.freebirdFormviewerViewNavigationSubmitButton, [jsname="M2UYVd"], button[data-value="Submit"], .freebirdFormviewerViewNavigationSubmitButton, .appsMaterialWizButtonPaperbuttonLabel, .quantumWizButtonPaperbuttonLabel');
         if (googleButtons.length > 0) {
           const button = googleButtons[0];
           return {
             tagName: button.tagName,
             className: button.className,
             id: button.id,
-            text: button.textContent
+            text: button.textContent,
+            type: 'google-button'
           };
+        }
+        
+        // Ищем кнопки с определенными атрибутами Google Forms
+        const googleSubmitButtons = document.querySelectorAll('[data-value="Submit"], [aria-label*="Submit"], [aria-label*="Отправить"], button[jsname="M2UYVd"]');
+        if (googleSubmitButtons.length > 0) {
+          const button = googleSubmitButtons[0];
+          return {
+            tagName: button.tagName,
+            className: button.className,
+            id: button.id,
+            text: button.textContent,
+            type: 'google-submit-button'
+          };
+        }
+        
+        // Ищем кнопки с текстом Submit или Отправить, но исключаем длинные тексты с инструкциями
+        // Исключаем span элементы, так как они часто содержат инструкции
+        const buttons = Array.from(document.querySelectorAll('button, input[type="submit"], div[role="button"]'));
+        
+        for (const button of buttons) {
+          const text = button.textContent?.toLowerCase() || '';
+          const ariaLabel = button.getAttribute('aria-label')?.toLowerCase() || '';
+          
+          // Исключаем длинные тексты (больше 30 символов) - это скорее всего инструкции
+          if (text.length > 30) continue;
+          
+          // Исключаем тексты с URL, ссылками, инструкциями
+          if (text.includes('http') || text.includes('www') || text.includes('link') || 
+              text.includes('retweet') || text.includes('event') || text.includes('post') ||
+              text.includes('twitter') || text.includes('x.com')) {
+            continue;
+          }
+          
+          // Ищем только короткие тексты с "submit" или "отправить"
+          if ((text.trim() === 'submit' || text.trim() === 'отправить' || 
+               text.includes('submit') || text.includes('отправить')) && 
+              text.length < 20) {
+            return {
+              tagName: button.tagName,
+              className: button.className,
+              id: button.id,
+              text: button.textContent,
+              type: 'text-button'
+            };
+          }
+          
+          if (ariaLabel.includes('submit') || ariaLabel.includes('отправить')) {
+            return {
+              tagName: button.tagName,
+              className: button.className,
+              id: button.id,
+              text: button.textContent,
+              type: 'aria-button'
+            };
+          }
+        }
+        
+        // Ищем кнопки с определенными атрибутами
+        const submitInputs = document.querySelectorAll('input[type="submit"], button[type="submit"]');
+        if (submitInputs.length > 0) {
+          const button = submitInputs[0];
+          return {
+            tagName: button.tagName,
+            className: button.className,
+            id: button.id,
+            text: button.textContent || button.value,
+            type: 'submit-input'
+          };
+        }
+        
+        // Если ничего не найдено, попробуем найти любую кнопку с коротким текстом
+        const shortButtons = Array.from(document.querySelectorAll('button, input[type="submit"]'));
+        for (const button of shortButtons) {
+          const text = button.textContent?.toLowerCase() || '';
+          if (text.length > 0 && text.length < 15 && 
+              !text.includes('http') && !text.includes('www') && 
+              !text.includes('link') && !text.includes('retweet')) {
+            return {
+              tagName: button.tagName,
+              className: button.className,
+              id: button.id,
+              text: button.textContent,
+              type: 'short-button'
+            };
+          }
         }
         
         return null;
@@ -999,48 +1361,219 @@ class FormAutomator {
       if (submitButton) {
         console.log(`Найдена кнопка отправки:`, submitButton);
         
+        // Проверяем, что это действительно кнопка отправки, а не инструкция
+        if (submitButton.text && submitButton.text.length > 50) {
+          console.log('⚠️ Найденный элемент слишком длинный, возможно это инструкция. Пропускаем...');
+          submitButton = null;
+        } else if (submitButton.text && (submitButton.text.includes('http') || submitButton.text.includes('retweet'))) {
+          console.log('⚠️ Найденный элемент содержит ссылку, возможно это инструкция. Пропускаем...');
+          submitButton = null;
+        }
+      }
+      
+      if (submitButton) {
+        // Ждем, пока кнопка полностью загрузится и станет кликабельной
+        console.log('⏳ Ждем полной загрузки кнопки отправки...');
+        await page.waitForTimeout(2000); // Даем время на загрузку
+        
+        // Проверяем, что кнопка действительно кликабельна
+        const isClickable = await page.evaluate(() => {
+          const buttons = Array.from(document.querySelectorAll('button, input[type="submit"], div[role="button"], span'));
+          for (const button of buttons) {
+            const text = button.textContent?.toLowerCase() || '';
+            const ariaLabel = button.getAttribute('aria-label')?.toLowerCase() || '';
+            
+            if (text.includes('submit') || text.includes('отправить') || 
+                ariaLabel.includes('submit') || ariaLabel.includes('отправить')) {
+              const style = window.getComputedStyle(button);
+              const isVisible = style.display !== 'none' && style.visibility !== 'hidden' && style.opacity !== '0';
+              const isEnabled = !button.disabled && !button.hasAttribute('disabled');
+              const hasClickHandler = button.onclick !== null || button.getAttribute('onclick') !== null;
+              
+              console.log('Кнопка найдена:', {
+                text: button.textContent,
+                isVisible,
+                isEnabled,
+                hasClickHandler,
+                className: button.className
+              });
+              
+              return isVisible && isEnabled;
+            }
+          }
+          return false;
+        });
+        
+        if (!isClickable) {
+          console.log('⚠️ Кнопка отправки найдена, но не кликабельна. Ждем еще...');
+          await page.waitForTimeout(3000); // Дополнительное ожидание
+        }
+        
         // Пробуем разные способы клика
         const clickMethods = [
-          // Метод 1: Клик по селектору
-          async () => {
-            const selector = submitButton.id ? `#${submitButton.id}` : 
-                           submitButton.className ? `.${submitButton.className.split(' ')[0]}` : 
-                           submitButton.tagName.toLowerCase();
-            await page.click(selector);
-          },
+            // Метод 1: Клик через evaluate с более точным поиском
+            async () => {
+              const clicked = await page.evaluate(() => {
+                // Ищем кнопки с текстом Submit
+                const buttons = Array.from(document.querySelectorAll('button, input[type="submit"], div[role="button"], span'));
+                for (const button of buttons) {
+                  const text = button.textContent?.toLowerCase() || '';
+                  const ariaLabel = button.getAttribute('aria-label')?.toLowerCase() || '';
+                  
+                  if (text.includes('submit') || text.includes('отправить') || 
+                      ariaLabel.includes('submit') || ariaLabel.includes('отправить')) {
+                    
+                    // Пробуем разные способы клика
+                    try {
+                      button.click();
+                      return true;
+                    } catch (e) {
+                      try {
+                        button.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+                        return true;
+                      } catch (e2) {
+                        try {
+                          button.dispatchEvent(new Event('click', { bubbles: true }));
+                          return true;
+                        } catch (e3) {
+                          return false;
+                        }
+                      }
+                    }
+                  }
+                }
+                return false;
+              });
+              
+              if (!clicked) {
+                throw new Error('Кнопка не найдена или клик не сработал');
+              }
+            },
           
-          // Метод 2: Клик через evaluate
-          async () => {
-            await page.evaluate(() => {
-              const buttons = Array.from(document.querySelectorAll('button, input[type="submit"], div[role="button"], span'));
-              for (const button of buttons) {
-                const text = button.textContent?.toLowerCase() || '';
-                if (text.includes('submit') || text.includes('отправить')) {
-                  button.click();
-                  return;
+            // Метод 2: Клик по Google Forms кнопке
+            async () => {
+              const clicked = await page.evaluate(() => {
+                const googleButton = document.querySelector('.freebirdFormviewerViewNavigationSubmitButton, [jsname="M2UYVd"], .M7eMe');
+                if (googleButton) {
+                  // Пробуем разные способы клика
+                  try {
+                    googleButton.click();
+                    return true;
+                  } catch (e) {
+                    try {
+                      googleButton.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+                      return true;
+                    } catch (e2) {
+                      try {
+                        googleButton.dispatchEvent(new Event('click', { bubbles: true }));
+                        return true;
+                      } catch (e3) {
+                        return false;
+                      }
+                    }
+                  }
+                }
+                return false;
+              });
+              
+              if (!clicked) {
+                throw new Error('Google Forms кнопка не найдена или клик не сработал');
+              }
+            },
+          
+            // Метод 3: Клик по селектору
+            async () => {
+              const selector = submitButton.id ? `#${submitButton.id}` : 
+                             submitButton.className ? `.${submitButton.className.split(' ')[0]}` : 
+                             submitButton.tagName.toLowerCase();
+              await page.click(selector);
+            },
+          
+            // Метод 4: Клик по координатам
+            async () => {
+              const element = await page.evaluateHandle(() => {
+                const buttons = Array.from(document.querySelectorAll('button, input[type="submit"], div[role="button"], span'));
+                for (const button of buttons) {
+                  const text = button.textContent?.toLowerCase() || '';
+                  if (text.includes('submit') || text.includes('отправить')) {
+                    return button;
+                  }
+                }
+                return null;
+              });
+              
+              if (element && element.asElement) {
+                const box = await element.asElement().boundingBox();
+                if (box) {
+                  await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2);
                 }
               }
-            });
-          },
+            },
           
-          // Метод 3: Клик по Google Forms кнопке
-          async () => {
-            await page.evaluate(() => {
-              const googleButton = document.querySelector('.freebirdFormviewerViewNavigationSubmitButton, [jsname="M2UYVd"]');
-              if (googleButton) {
-                googleButton.click();
-              }
-            });
-          }
+            // Метод 5: Отправка формы через JavaScript
+            async () => {
+              await page.evaluate(() => {
+                // Ищем форму
+                const form = document.querySelector('form');
+                if (form) {
+                  form.submit();
+                  return true;
+                }
+                
+                // Если формы нет, ищем кнопку и симулируем отправку
+                const buttons = Array.from(document.querySelectorAll('button, input[type="submit"], div[role="button"], span'));
+                for (const button of buttons) {
+                  const text = button.textContent?.toLowerCase() || '';
+                  if (text.includes('submit') || text.includes('отправить')) {
+                    // Создаем событие submit
+                    const submitEvent = new Event('submit', { bubbles: true, cancelable: true });
+                    button.dispatchEvent(submitEvent);
+                    
+                    // Также пробуем клик
+                    button.click();
+                    return true;
+                  }
+                }
+                return false;
+              });
+            }
         ];
         
-        for (const clickMethod of clickMethods) {
+        let clickSuccess = false;
+        for (let i = 0; i < clickMethods.length; i++) {
           try {
-            await clickMethod();
-            console.log('✅ Кнопка отправки нажата успешно!');
-            return;
+            // Небольшая задержка перед каждым методом клика
+            if (i > 0) {
+              await page.waitForTimeout(1000);
+            }
+            
+            await clickMethods[i]();
+            
+            // Проверяем, действительно ли кнопка была нажата
+            await page.waitForTimeout(500);
+            
+            // Проверяем, изменился ли URL или появились ли признаки отправки
+            const urlChanged = await page.evaluate(() => {
+              return window.location.href.includes('formResponse') || 
+                     window.location.href.includes('thankyou') ||
+                     window.location.href.includes('confirmation');
+            });
+            
+            const successMessage = await page.evaluate(() => {
+              const body = document.body;
+              const text = body.textContent.toLowerCase();
+              return text.includes('your response has been recorded') ||
+                     text.includes('спасибо') ||
+                     text.includes('ответ записан') ||
+                     text.includes('форма отправлена');
+            });
+            
+            if (urlChanged || successMessage) {
+              console.log('✅ Кнопка отправки нажата успешно!');
+              clickSuccess = true;
+              return;
+            }
           } catch (error) {
-            console.log(`❌ Метод клика не сработал: ${error.message}`);
             continue;
           }
         }
@@ -1059,36 +1592,68 @@ class FormAutomator {
 
   async waitForSubmission(page) {
     try {
-      console.log('⏳ Ждем подтверждения отправки формы...');
       
       // Ждем изменения URL или появления сообщения об успешной отправке
       await Promise.race([
         // Ждем изменения URL (Google Forms перенаправляет после отправки)
         page.waitForFunction(() => {
-          return window.location.href.includes('formResponse') || 
-                 window.location.href.includes('thankyou') ||
-                 window.location.href.includes('confirmation');
-        }, { timeout: 15000 }),
+          const url = window.location.href;
+          console.log('Текущий URL:', url);
+          return url.includes('formResponse') || 
+                 url.includes('thankyou') ||
+                 url.includes('confirmation') ||
+                 url.includes('viewform?usp=pp_url&formkey=');
+        }, { timeout: 20000 }),
         
         // Ждем появления сообщения об успешной отправке
-        page.waitForSelector('.freebirdFormviewerViewResponseConfirmationMessage, .thank-you, .success, [data-response-id]', { 
-          timeout: 15000 
+        page.waitForSelector('.freebirdFormviewerViewResponseConfirmationMessage, .thank-you, .success, [data-response-id], .freebirdFormviewerViewResponseConfirmationMessage', { 
+          timeout: 20000 
         }),
         
         // Ждем исчезновения формы
         page.waitForFunction(() => {
           const form = document.querySelector('form');
-          return !form || form.style.display === 'none';
-        }, { timeout: 15000 })
+          const submitButton = document.querySelector('button, input[type="submit"], div[role="button"], span');
+          return !form || form.style.display === 'none' || !submitButton;
+        }, { timeout: 20000 }),
+        
+        // Ждем появления текста подтверждения
+        page.waitForFunction(() => {
+          const body = document.body;
+          const text = body.textContent.toLowerCase();
+          return text.includes('your response has been recorded') ||
+                 text.includes('спасибо') ||
+                 text.includes('ответ записан') ||
+                 text.includes('форма отправлена');
+        }, { timeout: 20000 })
       ]);
       
       console.log('✅ Форма успешно отправлена!');
       
     } catch (error) {
+      console.log('Ошибка при ожидании подтверждения:', error.message);
+      
       // Проверяем, не изменился ли URL
       const currentUrl = page.url();
+      console.log('Текущий URL после попытки отправки:', currentUrl);
+      
       if (currentUrl.includes('formResponse') || currentUrl.includes('thankyou')) {
         console.log('✅ Форма отправлена (определено по URL)');
+        return;
+      }
+      
+      // Проверяем, есть ли сообщение об успешной отправке
+      const successMessage = await page.evaluate(() => {
+        const body = document.body;
+        const text = body.textContent.toLowerCase();
+        return text.includes('your response has been recorded') ||
+               text.includes('спасибо') ||
+               text.includes('ответ записан') ||
+               text.includes('форма отправлена');
+      });
+      
+      if (successMessage) {
+        console.log('✅ Форма отправлена (определено по тексту)');
         return;
       }
       

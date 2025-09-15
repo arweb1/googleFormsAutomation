@@ -32,6 +32,8 @@ import {
 } from '@mui/icons-material';
 import { apiService } from '../services/apiService';
 import AutomationProgress from '../components/AutomationProgress';
+import AccountDataEditor from '../components/AccountDataEditor';
+import FieldRenderer from '../components/FieldRenderer';
 
 const Automation = () => {
   const [forms, setForms] = useState([]);
@@ -65,6 +67,7 @@ const Automation = () => {
   const [running, setRunning] = useState(false);
   const [error, setError] = useState(null);
   const [openOptions, setOpenOptions] = useState(false);
+  const [openAccountEditor, setOpenAccountEditor] = useState(false);
 
   useEffect(() => {
     loadData();
@@ -127,7 +130,31 @@ const Automation = () => {
 
   const updateAccountField = (accountIndex, fieldId, value) => {
     const newAccountData = [...accountData];
-    newAccountData[accountIndex].fields[fieldId] = value;
+    
+    // Находим поле для определения типа
+    const form = forms.find(f => f.id === selectedForm);
+    const field = form?.fields?.find(f => f.id === fieldId);
+    
+    // Обрабатываем значение в зависимости от типа поля
+    let processedValue = value;
+    if (field) {
+      switch (field.type) {
+        case 'checkbox':
+          processedValue = Boolean(value);
+          break;
+        case 'number':
+          processedValue = isNaN(Number(value)) ? value : Number(value);
+          break;
+        case 'radio':
+        case 'select':
+          processedValue = String(value);
+          break;
+        default:
+          processedValue = String(value);
+      }
+    }
+    
+    newAccountData[accountIndex].fields[fieldId] = processedValue;
     setAccountData(newAccountData);
   };
 
@@ -141,11 +168,48 @@ const Automation = () => {
     // Создаем заголовки CSV на основе полей формы
     const headers = ['account_name', ...form.fields.map(field => field.title || field.id)];
     
-    // Создаем примеры данных
+    // Создаем примеры данных с учетом типов полей
     const exampleRows = [
-      ['Аккаунт 1', ...form.fields.map(field => `Пример_${field.id}`)],
-      ['Аккаунт 2', ...form.fields.map(field => `Пример_${field.id}_2`)],
-      ['Аккаунт 3', ...form.fields.map(field => `Пример_${field.id}_3`)]
+      ['Аккаунт 1', ...form.fields.map(field => {
+        switch (field.type) {
+          case 'checkbox':
+            return 'true'; // Чекбоксы: true/false
+          case 'radio':
+            return field.options[0]?.value || 'option1'; // Радиокнопки: значение опции
+          case 'select':
+            return field.options[0]?.value || 'option1'; // Выпадающие списки: значение опции
+          case 'email':
+            return 'example@email.com';
+          case 'number':
+            return '123';
+          case 'date':
+            return '2024-01-01';
+          case 'textarea':
+            return 'Пример текста';
+          default:
+            return `Пример_${field.id}`;
+        }
+      })],
+      ['Аккаунт 2', ...form.fields.map(field => {
+        switch (field.type) {
+          case 'checkbox':
+            return 'false';
+          case 'radio':
+            return field.options[1]?.value || 'option2';
+          case 'select':
+            return field.options[1]?.value || 'option2';
+          case 'email':
+            return 'example2@email.com';
+          case 'number':
+            return '456';
+          case 'date':
+            return '2024-01-02';
+          case 'textarea':
+            return 'Пример текста 2';
+          default:
+            return `Пример_${field.id}_2`;
+        }
+      })]
     ];
 
     // Генерируем CSV содержимое
@@ -219,9 +283,42 @@ const Automation = () => {
             }
             
             if (csvColumn && row[csvColumn]) {
-              account.fields[field.id] = row[csvColumn];
+              // Обрабатываем значения в зависимости от типа поля
+              let value = row[csvColumn];
+              
+              switch (field.type) {
+                case 'checkbox':
+                  // Чекбоксы: true/false, 1/0, да/нет
+                  value = value.toLowerCase() === 'true' || value === '1' || value.toLowerCase() === 'да';
+                  break;
+                case 'radio':
+                case 'select':
+                  // Радиокнопки и селекты: используем значение как есть
+                  value = value;
+                  break;
+                case 'number':
+                  // Числа: преобразуем в число
+                  value = isNaN(Number(value)) ? value : Number(value);
+                  break;
+                default:
+                  // Текстовые поля: используем как есть
+                  value = value;
+              }
+              
+              account.fields[field.id] = value;
             } else {
-              account.fields[field.id] = '';
+              // Устанавливаем значения по умолчанию в зависимости от типа поля
+              switch (field.type) {
+                case 'checkbox':
+                  account.fields[field.id] = false;
+                  break;
+                case 'radio':
+                case 'select':
+                  account.fields[field.id] = field.options[0]?.value || '';
+                  break;
+                default:
+                  account.fields[field.id] = '';
+              }
             }
           });
           
@@ -544,6 +641,25 @@ const Automation = () => {
                           variant="outlined"
                           size="small"
                           onClick={() => {
+                            if (!selectedForm) {
+                              setError('Сначала выберите форму');
+                              return;
+                            }
+                            const form = forms.find(f => f.id === selectedForm);
+                            if (!form || !form.fields || form.fields.length === 0) {
+                              setError('Выбранная форма не содержит полей');
+                              return;
+                            }
+                            setOpenAccountEditor(true);
+                          }}
+                          disabled={!selectedForm}
+                        >
+                          Редактировать данные
+                        </Button>
+                        <Button
+                          variant="outlined"
+                          size="small"
+                          onClick={() => {
                             const form = forms.find(f => f.id === selectedForm);
                             if (!form || !form.fields) return;
                             
@@ -554,7 +670,21 @@ const Automation = () => {
                             };
                             
                             form.fields.forEach(field => {
-                              newAccount.fields[field.id] = '';
+                              // Инициализируем поля в зависимости от их типа
+                              switch (field.type) {
+                                case 'checkbox':
+                                  newAccount.fields[field.id] = false;
+                                  break;
+                                case 'radio':
+                                case 'select':
+                                  newAccount.fields[field.id] = field.options?.[0]?.value || '';
+                                  break;
+                                case 'number':
+                                  newAccount.fields[field.id] = 0;
+                                  break;
+                                default:
+                                  newAccount.fields[field.id] = '';
+                              }
                             });
                             
                             setAccountData([...accountData, newAccount]);
@@ -579,12 +709,10 @@ const Automation = () => {
                             <Grid container spacing={2}>
                               {form.fields.map((field) => (
                                 <Grid item xs={12} sm={6} md={4} key={field.id}>
-                                  <TextField
-                                    fullWidth
-                                    label={field.title}
-                                    value={account.fields[field.id] || ''}
-                                    onChange={(e) => updateAccountField(accountIndex, field.id, e.target.value)}
-                                    placeholder={`Введите ${field.title.toLowerCase()}`}
+                                  <FieldRenderer
+                                    field={field}
+                                    value={account.fields[field.id]}
+                                    onChange={(value) => updateAccountField(accountIndex, field.id, value)}
                                     size="small"
                                   />
                                 </Grid>
@@ -935,6 +1063,16 @@ const Automation = () => {
           </Button>
         </DialogActions>
       </Dialog>
+
+      {/* Редактор данных аккаунтов */}
+      <AccountDataEditor
+        open={openAccountEditor}
+        onClose={() => setOpenAccountEditor(false)}
+        accountData={accountData}
+        setAccountData={setAccountData}
+        formFields={selectedForm ? forms.find(f => f.id === selectedForm)?.fields || [] : []}
+        selectedForm={selectedForm ? forms.find(f => f.id === selectedForm) : null}
+      />
     </Container>
   );
 };

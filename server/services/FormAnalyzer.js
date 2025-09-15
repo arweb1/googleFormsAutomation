@@ -26,11 +26,86 @@ class FormAnalyzer {
       
       await page.goto(formUrl, { waitUntil: 'networkidle2' });
       
-      // Ждем загрузки контента формы - используем более общий селектор
-      await page.waitForSelector('input[type="text"], textarea, select, input[type="checkbox"], input[type="radio"]', { timeout: 15000 });
+      // Ждем загрузки контента формы - используем более общий селектор для современных Google Forms
+      await page.waitForSelector('input, textarea, select, [role="checkbox"], [role="radio"], [role="combobox"], .freebirdFormviewerViewItemsItemItem', { timeout: 15000 });
       
       // Дополнительное ожидание для полной загрузки
       await page.waitForTimeout(2000);
+      
+      // Добавляем отладочную информацию
+      console.log('🔍 Анализируем структуру формы...');
+      const debugInfo = await page.evaluate(() => {
+        const info = {
+          totalInputs: document.querySelectorAll('input').length,
+          totalTextareas: document.querySelectorAll('textarea').length,
+          totalSelects: document.querySelectorAll('select').length,
+          totalCheckboxes: document.querySelectorAll('input[type="checkbox"]').length,
+          totalRadios: document.querySelectorAll('input[type="radio"]').length,
+          questionElements: document.querySelectorAll('.freebirdFormviewerViewItemsItemItem').length,
+          modernQuestionElements: document.querySelectorAll('[data-item-id]').length,
+          // Дополнительные селекторы для отладки
+          allDivs: document.querySelectorAll('div').length,
+          freebirdElements: document.querySelectorAll('[class*="freebird"]').length,
+          checkboxElements: document.querySelectorAll('[role="checkbox"], input[type="checkbox"], .checkbox').length,
+          // Ищем все элементы с текстом "Record my email"
+          recordEmailElements: Array.from(document.querySelectorAll('*')).filter(el => 
+            el.textContent && el.textContent.includes('Record my email')).length
+        };
+        return info;
+      });
+      
+      console.log('📊 Отладочная информация:', debugInfo);
+      
+      // Дополнительная отладка - ищем все элементы с чекбоксами
+      const checkboxDebug = await page.evaluate(() => {
+        const checkboxes = [];
+        
+        // Ищем все элементы с role="checkbox"
+        const roleCheckboxes = document.querySelectorAll('[role="checkbox"]');
+        roleCheckboxes.forEach((el, index) => {
+          checkboxes.push({
+            type: 'role-checkbox',
+            index: index,
+            tagName: el.tagName,
+            className: el.className,
+            textContent: el.textContent.trim(),
+            ariaLabel: el.getAttribute('aria-label'),
+            innerHTML: el.innerHTML.substring(0, 200)
+          });
+        });
+        
+        // Ищем все input[type="checkbox"]
+        const inputCheckboxes = document.querySelectorAll('input[type="checkbox"]');
+        inputCheckboxes.forEach((el, index) => {
+          checkboxes.push({
+            type: 'input-checkbox',
+            index: index,
+            tagName: el.tagName,
+            className: el.className,
+            name: el.name,
+            value: el.value,
+            checked: el.checked,
+            innerHTML: el.outerHTML
+          });
+        });
+        
+        // Ищем все элементы с классом checkbox
+        const classCheckboxes = document.querySelectorAll('.checkbox, [class*="checkbox"]');
+        classCheckboxes.forEach((el, index) => {
+          checkboxes.push({
+            type: 'class-checkbox',
+            index: index,
+            tagName: el.tagName,
+            className: el.className,
+            textContent: el.textContent.trim(),
+            innerHTML: el.innerHTML.substring(0, 200)
+          });
+        });
+        
+        return checkboxes;
+      });
+      
+      console.log('🔍 Найденные чекбоксы:', checkboxDebug);
       
       // Получаем название формы ДО закрытия страницы
       const formTitle = await this.getFormTitle(page);
@@ -39,127 +114,225 @@ class FormAnalyzer {
       const formData = await page.evaluate(() => {
         const fields = [];
         
-        // Ищем все видимые поля ввода
-        const visibleInputs = Array.from(document.querySelectorAll('input, textarea, select')).filter(input => {
-          // Пропускаем скрытые поля
-          if (input.type === 'hidden') return false;
-          if (input.name === 'fvv' || input.name === 'partialResponse' || 
-              input.name === 'pageHistory' || input.name === 'fbzx' || 
-              input.name === 'submissionTimestamp') return false;
-          
-          // Проверяем видимость
-          return input.offsetParent !== null;
-        });
+        // Ищем все элементы вопросов в современных Google Forms
+        const questionElements = document.querySelectorAll('.freebirdFormviewerViewItemsItemItem, [data-item-id], .freebirdFormviewerViewItemsItemItemWrapper, .freebirdFormviewerViewItemsItemItem, .freebirdFormviewerViewItemsItemItemWrapper');
         
-        // Для чекбоксов и радио-кнопок группируем их по имени
-        const groupedInputs = [];
-        const processedNames = new Set();
+        console.log(`Найдено элементов вопросов: ${questionElements.length}`);
         
-        visibleInputs.forEach(input => {
-          if (input.type === 'checkbox' || input.type === 'radio') {
-            if (!processedNames.has(input.name)) {
-              processedNames.add(input.name);
-              groupedInputs.push(input);
-            }
-          } else {
-            groupedInputs.push(input);
-          }
-        });
-        
-        groupedInputs.forEach((input, index) => {
-          const field = {
-            id: `field_${index + 1}`,
-            name: input.name || `field_${index + 1}`,
-            type: input.type || 'text',
-            required: input.hasAttribute('required'),
-            placeholder: input.placeholder || '',
-            title: '',
-            description: '',
-            options: []
-          };
-          
-          // Ищем заголовок поля - ищем в родительских элементах
-          let currentElement = input.parentElement;
-          let titleFound = false;
-          
-          // Поднимаемся по DOM дереву в поисках заголовка
-          while (currentElement && !titleFound) {
-            // Ищем текст в различных элементах
-            const textElements = currentElement.querySelectorAll('span, div, label, p');
-            for (const textEl of textElements) {
-              const text = textEl.textContent.trim();
-            // Пропускаем пустые тексты и технические элементы
-            if (text && text.length > 0 && 
-                !text.includes('Your answer') && 
-                !text.includes('Ваша відповідь') &&
-                !text.includes('Submit') &&
-                !text.includes('Clear form') &&
-                !text.includes('Sign in to Google') &&
-                !text.includes('Learn more') &&
-                text.length < 100 &&
-                text.length > 3) {
-                field.title = text;
-                titleFound = true;
+        questionElements.forEach((questionElement, index) => {
+          try {
+            // Ищем заголовок вопроса
+            let title = '';
+            const titleSelectors = [
+              '.freebirdFormviewerViewItemsItemItemTitle',
+              '.freebirdFormviewerViewItemsItemItemTitleText',
+              '[data-params*="title"]',
+              '.freebirdFormviewerViewItemsItemItemTitleContainer',
+              'h2',
+              'h3',
+              '.question-title',
+              '[role="heading"]'
+            ];
+            
+            for (const selector of titleSelectors) {
+              const titleEl = questionElement.querySelector(selector);
+              if (titleEl && titleEl.textContent.trim()) {
+                title = titleEl.textContent.trim();
                 break;
               }
             }
-            currentElement = currentElement.parentElement;
-          }
-          
-          // Если заголовок не найден, создаем общий
-          if (!field.title) {
-            field.title = `Поле ${index + 1}`;
-          }
-          
-          // Для полей выбора получаем варианты
-          if (field.type === 'radio' || field.type === 'checkbox') {
-            const radioGroup = document.querySelectorAll(`input[name="${input.name}"]`);
-            radioGroup.forEach(radio => {
-              // Ищем текст опции в различных элементах
-              let optionText = '';
-              
-              // Пробуем найти текст в label
-              const label = radio.closest('label');
-              if (label) {
-                optionText = label.textContent.trim();
-              } else {
-                // Ищем текст в родительских элементах
-                let currentEl = radio.parentElement;
-                while (currentEl && !optionText) {
-                  const textEl = currentEl.querySelector('span, div');
-                  if (textEl && textEl.textContent.trim()) {
-                    optionText = textEl.textContent.trim();
-                    break;
-                  }
-                  currentEl = currentEl.parentElement;
+            
+            // Если заголовок не найден, ищем в общих элементах
+            if (!title) {
+              const textElements = questionElement.querySelectorAll('span, div, p');
+              for (const textEl of textElements) {
+                const text = textEl.textContent.trim();
+                if (text && text.length > 3 && text.length < 200 && 
+                    !text.includes('Your answer') && 
+                    !text.includes('Required') &&
+                    !text.includes('Optional') &&
+                    !text.includes('Submit') &&
+                    !text.includes('Clear form')) {
+                  title = text;
+                  break;
                 }
               }
+            }
+            
+            if (!title) {
+              title = `Вопрос ${index + 1}`;
+            }
+            
+            // Определяем тип поля и получаем опции
+            let fieldType = 'text';
+            let options = [];
+            let required = false;
+            
+            // Проверяем на обязательность
+            if (questionElement.querySelector('[aria-label*="Required"], .freebirdFormviewerViewItemsItemRequiredAsterisk')) {
+              required = true;
+            }
+            
+            // Ищем поля ввода
+            const inputElements = questionElement.querySelectorAll('input, textarea, select, [role="checkbox"], [role="radio"], [role="combobox"]');
+            
+            if (inputElements.length > 0) {
+              const firstInput = inputElements[0];
               
-              // Если текст не найден, используем value
-              if (!optionText) {
-                optionText = radio.value || 'Опция';
+              // Определяем тип поля
+              if (firstInput.type === 'radio' || firstInput.getAttribute('role') === 'radio') {
+                fieldType = 'radio';
+                // Получаем все радио-кнопки в группе
+                const radioGroup = questionElement.querySelectorAll('input[type="radio"], [role="radio"]');
+                radioGroup.forEach(radio => {
+                  const label = radio.closest('label') || radio.parentElement;
+                  const optionText = label ? label.textContent.trim() : radio.value || 'Опция';
+                  options.push({
+                    value: radio.value || optionText,
+                    label: optionText,
+                    checked: radio.checked || false
+                  });
+                });
+              } else if (firstInput.type === 'checkbox' || firstInput.getAttribute('role') === 'checkbox') {
+                fieldType = 'checkbox';
+                // Получаем все чекбоксы в группе
+                const checkboxGroup = questionElement.querySelectorAll('input[type="checkbox"], [role="checkbox"]');
+                checkboxGroup.forEach(checkbox => {
+                  const label = checkbox.closest('label') || checkbox.parentElement;
+                  const optionText = label ? label.textContent.trim() : checkbox.value || 'Опция';
+                  options.push({
+                    value: checkbox.value || optionText,
+                    label: optionText,
+                    checked: checkbox.checked || false
+                  });
+                });
+              } else if (firstInput.tagName === 'SELECT' || firstInput.getAttribute('role') === 'combobox') {
+                fieldType = 'select';
+                const selectOptions = firstInput.querySelectorAll('option');
+                selectOptions.forEach(option => {
+                  options.push({
+                    value: option.value,
+                    label: option.textContent.trim(),
+                    selected: option.selected || false
+                  });
+                });
+              } else if (firstInput.tagName === 'TEXTAREA') {
+                fieldType = 'textarea';
+              } else if (firstInput.type === 'email') {
+                fieldType = 'email';
+              } else if (firstInput.type === 'number') {
+                fieldType = 'number';
+              } else if (firstInput.type === 'date') {
+                fieldType = 'date';
+              } else if (firstInput.type === 'time') {
+                fieldType = 'time';
+              } else if (firstInput.type === 'url') {
+                fieldType = 'url';
+              } else if (firstInput.type === 'tel') {
+                fieldType = 'tel';
+              } else {
+                fieldType = 'text';
               }
-              
-              field.options.push({
-                value: radio.value,
-                label: optionText,
-                checked: radio.checked
-              });
-            });
-          } else if (field.type === 'select') {
-            const options = input.querySelectorAll('option');
-            options.forEach(option => {
-              field.options.push({
-                value: option.value,
-                label: option.textContent.trim(),
-                selected: option.selected
-              });
-            });
+            }
+            
+            // Создаем объект поля
+            const field = {
+              id: `field_${index + 1}`,
+              name: `field_${index + 1}`,
+              type: fieldType,
+              required: required,
+              placeholder: '',
+              title: title,
+              description: '',
+              options: options
+            };
+            
+            fields.push(field);
+            console.log(`Обработан вопрос ${index + 1}: ${title} (тип: ${fieldType}, опций: ${options.length})`);
+            
+          } catch (error) {
+            console.error(`Ошибка при обработке вопроса ${index + 1}:`, error);
           }
-          
-          fields.push(field);
         });
         
+        // Если не найдены элементы вопросов, пробуем старый метод
+        if (fields.length === 0) {
+          console.log('Не найдены элементы вопросов, используем старый метод...');
+          
+          const visibleInputs = Array.from(document.querySelectorAll('input, textarea, select')).filter(input => {
+            if (input.type === 'hidden') return false;
+            if (input.name === 'fvv' || input.name === 'partialResponse' || 
+                input.name === 'pageHistory' || input.name === 'fbzx' || 
+                input.name === 'submissionTimestamp') return false;
+            return input.offsetParent !== null;
+          });
+          
+          visibleInputs.forEach((input, index) => {
+            const field = {
+              id: `field_${index + 1}`,
+              name: input.name || `field_${index + 1}`,
+              type: input.type || 'text',
+              required: input.hasAttribute('required'),
+              placeholder: input.placeholder || '',
+              title: `Поле ${index + 1}`,
+              description: '',
+              options: []
+            };
+            
+            fields.push(field);
+          });
+        }
+        
+        // Дополнительно ищем чекбоксы с role="checkbox"
+        const roleCheckboxes = document.querySelectorAll('[role="checkbox"]');
+        roleCheckboxes.forEach((checkbox, index) => {
+          const ariaLabel = checkbox.getAttribute('aria-label');
+          if (ariaLabel && ariaLabel.trim()) {
+            // Определяем обязательность чекбокса
+            let required = false;
+            
+            // Проверяем различные индикаторы обязательности
+            if (checkbox.getAttribute('aria-required') === 'true') {
+              required = true;
+            } else if (checkbox.closest('[data-required="true"]')) {
+              required = true;
+            } else if (checkbox.closest('.required')) {
+              required = true;
+            } else if (checkbox.closest('[class*="required"]')) {
+              required = true;
+            } else {
+              // Проверяем родительские элементы на наличие индикаторов обязательности
+              let parent = checkbox.parentElement;
+              while (parent && parent !== document.body) {
+                if (parent.textContent && parent.textContent.includes('*')) {
+                  required = true;
+                  break;
+                }
+                parent = parent.parentElement;
+              }
+            }
+            
+            const field = {
+              id: `checkbox_${fields.length + 1}`,
+              name: `checkbox_${fields.length + 1}`,
+              type: 'checkbox',
+              required: required,
+              placeholder: '',
+              title: ariaLabel.trim(),
+              description: '',
+              options: [{
+                value: 'true',
+                label: ariaLabel.trim(),
+                checked: checkbox.getAttribute('aria-checked') === 'true'
+              }]
+            };
+            
+            fields.push(field);
+            console.log(`Добавлен чекбокс: ${ariaLabel.trim()} (обязательный: ${field.required})`);
+          }
+        });
+        
+        console.log(`Итого найдено полей: ${fields.length}`);
         return fields;
       });
       
