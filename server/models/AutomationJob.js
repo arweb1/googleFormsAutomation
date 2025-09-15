@@ -4,6 +4,12 @@ const path = require('path');
 class AutomationJob {
   constructor() {
     this.jobsFile = path.join(__dirname, '../../data/automation-jobs.json');
+    this.ensureDataDirectory();
+  }
+
+  async ensureDataDirectory() {
+    const dataDir = path.dirname(this.jobsFile);
+    await fs.ensureDir(dataDir);
   }
 
   async getAll() {
@@ -114,7 +120,6 @@ class AutomationJob {
   // Очистка всех задач
   async clearAll() {
     try {
-      await this.ensureDataDirectory();
       await fs.writeFile(this.jobsFile, JSON.stringify([], null, 2));
       console.log('✅ Все задачи автоматизации удалены');
     } catch (error) {
