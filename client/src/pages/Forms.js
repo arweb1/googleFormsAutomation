@@ -316,15 +316,17 @@ const Forms = () => {
                   <Grid item xs={12} sm={6} md={4} key={index}>
                     <Card variant="outlined">
                       <CardContent sx={{ p: 2 }}>
-                        <Typography variant="subtitle2" noWrap>
-                          {field.name || field.id}
-                        </Typography>
+                        <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', mb: 1 }}>
+                          <Typography variant="subtitle2" noWrap>
+                            {field.name || field.id}
+                          </Typography>
+                          {field.required && (
+                            <Chip label="Обязательное" size="small" color="error" />
+                          )}
+                        </Box>
                         <Typography variant="caption" color="text.secondary">
                           {field.type}
                         </Typography>
-                        {field.required && (
-                          <Chip label="Обязательное" size="small" color="error" sx={{ ml: 1 }} />
-                        )}
                       </CardContent>
                     </Card>
                   </Grid>

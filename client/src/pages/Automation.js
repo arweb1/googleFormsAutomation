@@ -43,8 +43,6 @@ const Automation = () => {
   const [selectedAccounts, setSelectedAccounts] = useState([]);
   const [loginMode, setLoginMode] = useState('anonymous'); // 'google' или 'anonymous'
   const [accountData, setAccountData] = useState([]);
-  const [csvFile, setCsvFile] = useState(null);
-  const [csvData, setCsvData] = useState([]);
   const [options, setOptions] = useState({
     delay: 1000,
     submit: true,
@@ -130,8 +128,6 @@ const Automation = () => {
   const handleCsvImport = (event) => {
     const file = event.target.files[0];
     if (!file) return;
-
-    setCsvFile(file);
     
     const reader = new FileReader();
     reader.onload = (e) => {
@@ -150,8 +146,6 @@ const Automation = () => {
           data.push(row);
         }
       }
-      
-      setCsvData(data);
       
       // Автоматически создаем аккаунты на основе CSV данных
       const form = forms.find(f => f.id === selectedForm);

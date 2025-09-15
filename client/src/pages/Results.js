@@ -307,9 +307,12 @@ const Results = () => {
             <Box>
               <Grid container spacing={2} sx={{ mb: 3 }}>
                 <Grid item xs={6}>
-                  <Typography variant="body2" color="text.secondary">
-                    Статус: <Chip label={getStatusText(selectedJob.status)} color={getStatusColor(selectedJob.status)} size="small" />
-                  </Typography>
+                  <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                    <Typography variant="body2" color="text.secondary">
+                      Статус:
+                    </Typography>
+                    <Chip label={getStatusText(selectedJob.status)} color={getStatusColor(selectedJob.status)} size="small" />
+                  </Box>
                 </Grid>
                 <Grid item xs={6}>
                   <Typography variant="body2" color="text.secondary">
@@ -354,7 +357,9 @@ const Results = () => {
                     <TableHead>
                       <TableRow>
                         <TableCell>Аккаунт</TableCell>
+                        <TableCell>Email</TableCell>
                         <TableCell>Статус</TableCell>
+                        <TableCell>Заполненные данные</TableCell>
                         <TableCell>Время отправки</TableCell>
                         <TableCell>Ошибка</TableCell>
                       </TableRow>
@@ -364,7 +369,12 @@ const Results = () => {
                         <TableRow key={index}>
                           <TableCell>
                             <Typography variant="body2">
-                              {result.accountId || `Аккаунт ${index + 1}`}
+                              {result.accountName || result.accountId || `Аккаунт ${index + 1}`}
+                            </Typography>
+                          </TableCell>
+                          <TableCell>
+                            <Typography variant="body2" color="text.secondary">
+                              {result.accountEmail || '-'}
                             </Typography>
                           </TableCell>
                           <TableCell>
@@ -373,6 +383,21 @@ const Results = () => {
                               color={result.success ? 'success' : 'error'}
                               size="small"
                             />
+                          </TableCell>
+                          <TableCell>
+                            {result.filledData ? (
+                              <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 0.5, maxWidth: 200 }}>
+                                {Object.entries(result.filledData).map(([key, value]) => (
+                                  <Chip
+                                    key={key}
+                                    label={`${key}: ${value}`}
+                                    size="small"
+                                    variant="outlined"
+                                    sx={{ fontSize: '0.7rem' }}
+                                  />
+                                ))}
+                              </Box>
+                            ) : '-'}
                           </TableCell>
                           <TableCell>
                             {result.submittedAt ? new Date(result.submittedAt).toLocaleString('ru-RU') : '-'}

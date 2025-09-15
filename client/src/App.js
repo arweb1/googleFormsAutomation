@@ -5,6 +5,7 @@ import CssBaseline from '@mui/material/CssBaseline';
 import { Box } from '@mui/material';
 
 import Navbar from './components/Navbar';
+import NotificationSystem from './components/NotificationSystem';
 import Dashboard from './pages/Dashboard';
 import Forms from './pages/Forms';
 import Accounts from './pages/Accounts';
@@ -39,6 +40,7 @@ function App() {
               <Route path="/results" element={<Results />} />
             </Routes>
           </Box>
+          <NotificationSystem />
         </Box>
       </Router>
     </ThemeProvider>

@@ -109,9 +109,12 @@ class AutomationJob {
       job.results.push({
         timestamp: new Date().toISOString(),
         accountId: result.accountId,
+        accountName: result.accountName || null,
+        accountEmail: result.accountEmail || null,
         success: result.success,
         error: result.error || null,
-        submittedAt: result.submittedAt || null
+        submittedAt: result.submittedAt || null,
+        filledData: result.filledData || null // Данные, которыми заполнялась форма
       });
       
       await this.update(jobId, { results: job.results });

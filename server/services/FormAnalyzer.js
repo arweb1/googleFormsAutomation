@@ -32,6 +32,9 @@ class FormAnalyzer {
       // Дополнительное ожидание для полной загрузки
       await page.waitForTimeout(2000);
       
+      // Получаем название формы ДО закрытия страницы
+      const formTitle = await this.getFormTitle(page);
+      
       // Получаем данные формы через JavaScript
       const formData = await page.evaluate(() => {
         const fields = [];
@@ -164,7 +167,7 @@ class FormAnalyzer {
       
       return {
         url: formUrl,
-        title: await this.getFormTitle(page),
+        title: formTitle,
         fields: formData,
         submitAction: '',
         method: 'POST',
@@ -181,18 +184,64 @@ class FormAnalyzer {
     try {
       const title = await page.evaluate(() => {
         const titleSelectors = [
-          'h1',
+          // Современные селекторы Google Forms
+          'h1[data-params*="title"]',
           '.freebirdFormviewerViewHeaderTitle',
           '.freebirdFormviewerViewHeaderTitleContainer',
           '.freebirdFormviewerViewHeaderTitleContainerTitle',
+          '.freebirdFormviewerViewHeaderTitleContainerTitleText',
           '[data-params*="title"]',
-          '.freebirdFormviewerViewHeaderTitleContainerTitleText'
+          // Общие селекторы заголовков
+          'h1',
+          'h2',
+          '.form-title',
+          '.header-title',
+          // Селекторы для новых версий Google Forms
+          '[role="heading"]',
+          '.M7eMe',
+          '.aXBZVd',
+          '.freebirdFormviewerViewHeaderTitleContainerTitleText',
+          // Дополнительные селекторы
+          'title',
+          'meta[property="og:title"]'
         ];
         
         for (const selector of titleSelectors) {
           const titleElement = document.querySelector(selector);
-          if (titleElement && titleElement.textContent.trim()) {
-            return titleElement.textContent.trim();
+          if (titleElement) {
+            let titleText = '';
+            
+            // Для meta тегов получаем content
+            if (titleElement.tagName === 'META') {
+              titleText = titleElement.getAttribute('content') || '';
+            } else {
+              titleText = titleElement.textContent || titleElement.innerText || '';
+            }
+            
+            titleText = titleText.trim();
+            
+            // Проверяем, что это не пустой текст и не технические элементы
+            if (titleText && 
+                titleText.length > 0 && 
+                titleText.length < 200 &&
+                !titleText.includes('Google Forms') &&
+                !titleText.includes('Untitled form') &&
+                !titleText.includes('Без названия') &&
+                !titleText.includes('Submit') &&
+                !titleText.includes('Clear form')) {
+              return titleText;
+            }
+          }
+        }
+        
+        // Если ничего не найдено, пробуем найти любой заголовок на странице
+        const allHeadings = document.querySelectorAll('h1, h2, h3, [role="heading"]');
+        for (const heading of allHeadings) {
+          const text = heading.textContent.trim();
+          if (text && text.length > 0 && text.length < 200 && 
+              !text.includes('Google Forms') && 
+              !text.includes('Untitled form')) {
+            return text;
           }
         }
         
@@ -200,6 +249,7 @@ class FormAnalyzer {
       });
       return title;
     } catch (error) {
+      console.error('Ошибка при извлечении названия формы:', error);
       return 'Без названия';
     }
   }

@@ -4,7 +4,8 @@ const path = require('path');
 class FormConfig {
   constructor(configData) {
     this.id = configData.id || `config_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
-    this.name = configData.name || 'Без названия';
+    // Используем извлеченное название формы, если оно есть, иначе fallback
+    this.name = configData.title || configData.name || 'Без названия';
     this.url = configData.url || '';
     this.title = configData.title || '';
     this.fields = configData.fields || [];

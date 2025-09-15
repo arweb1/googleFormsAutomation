@@ -165,8 +165,11 @@ class FormAutomator {
           // Добавляем результат успешной обработки
           await this.jobModel.addResult(jobId, {
             accountId: account.id,
+            accountName: account.name,
+            accountEmail: account.email,
             success: true,
-            submittedAt: result.submittedAt
+            submittedAt: result.submittedAt,
+            filledData: account.fields // Данные, которыми заполнялась форма
           });
           
           // Обновляем счетчик завершенных аккаунтов
@@ -200,8 +203,11 @@ class FormAutomator {
           // Добавляем результат ошибки
           await this.jobModel.addResult(jobId, {
             accountId: account.id,
+            accountName: account.name,
+            accountEmail: account.email,
             success: false,
-            error: error.message
+            error: error.message,
+            filledData: account.fields // Данные, которыми пытались заполнить форму
           });
           
           // Обновляем счетчик неудачных аккаунтов
@@ -235,9 +241,43 @@ class FormAutomator {
         message: `Автоматизация завершена. Обработано: ${job.completedAccounts}, Ошибок: ${job.failedAccounts}`
       });
       
+      // Небольшая задержка перед отправкой уведомления
+      await new Promise(resolve => setTimeout(resolve, 1000));
+      
+      // Отправляем уведомление о завершении
+      await this.sendNotification({
+        type: 'success',
+        message: `🎉 Задача "${formConfig.title}" завершена! Обработано: ${job.completedAccounts}, Ошибок: ${job.failedAccounts}`,
+        sound: true
+      });
+      
+      // Закрываем браузер после завершения всех задач
+      console.log('🔒 Закрываем браузер...');
+      await browser.close();
+      console.log('✅ Браузер закрыт');
+      
     } catch (error) {
       console.error(`Критическая ошибка в задаче ${jobId}:`, error);
+      
+      // Закрываем браузер в случае ошибки
+      try {
+        if (browser) {
+          console.log('🔒 Закрываем браузер из-за ошибки...');
+          await browser.close();
+          console.log('✅ Браузер закрыт');
+        }
+      } catch (closeError) {
+        console.error('Ошибка при закрытии браузера:', closeError);
+      }
+      
       await this.updateJobStatus(jobId, 'failed', error.message);
+      
+      // Отправляем уведомление об ошибке
+      await this.sendNotification({
+        type: 'error',
+        message: `❌ Задача "${formConfig?.title || 'Неизвестная'}" завершилась с ошибкой: ${error.message}`,
+        sound: true
+      });
     }
   }
 
@@ -731,6 +771,24 @@ class FormAutomator {
       await this.jobModel.update(jobId, updates);
     } catch (error) {
       console.error('Ошибка обновления статуса задачи:', error);
+    }
+  }
+
+  async sendNotification(notification) {
+    try {
+      const response = await fetch('http://localhost:3001/api/notifications', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(notification)
+      });
+      
+      if (!response.ok) {
+        console.error('Ошибка при отправке уведомления:', response.statusText);
+      }
+    } catch (error) {
+      console.error('Ошибка при отправке уведомления:', error);
     }
   }
 
