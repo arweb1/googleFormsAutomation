@@ -25,12 +25,19 @@ class FormAutomator {
   async startAutomation(formConfigId, accountIds, options = {}) {
     const jobId = `job_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
     
+    console.log(`🎯 Создание новой задачи автоматизации: ${jobId}`);
+    console.log(`📝 ID конфигурации формы: ${formConfigId}`);
+    console.log(`👥 Количество аккаунтов: ${options.accountData?.length || 0}`);
+    console.log(`🔐 Режим входа: ${options.loginMode || 'anonymous'}`);
+    
     try {
       // Получаем конфигурацию формы
+      console.log(`🔍 Поиск конфигурации формы...`);
       const formConfig = await FormConfig.getById(formConfigId);
       if (!formConfig) {
         throw new Error('Конфигурация формы не найдена');
       }
+      console.log(`✅ Конфигурация формы найдена: ${formConfig.title}`);
 
       let accounts = [];
       
@@ -58,6 +65,7 @@ class FormAutomator {
       }
 
       // Создаем задачу в базе данных
+      console.log(`💾 Создание задачи в базе данных...`);
       const job = await this.jobModel.create({
         id: jobId,
         formConfigId,
@@ -69,16 +77,19 @@ class FormAutomator {
         failedAccounts: 0,
         loginMode: options.loginMode || 'anonymous'
       });
+      console.log(`✅ Задача создана в базе данных`);
 
       // Добавляем начальный лог
+      console.log(`📝 Добавление начального лога...`);
       await this.jobModel.addLog(jobId, {
         type: 'info',
         message: `Запуск автоматизации для ${accounts.length} аккаунтов (${options.loginMode === 'google' ? 'с логином Google' : 'анонимно'})`
       });
 
       // Запускаем автоматизацию в фоне
+      console.log(`🚀 Запуск автоматизации в фоновом режиме...`);
       this.runAutomation(jobId, formConfig, accounts, options).catch(error => {
-        console.error(`Ошибка в задаче ${jobId}:`, error);
+        console.error(`❌ Ошибка в задаче ${jobId}:`, error);
         this.updateJobStatus(jobId, 'failed', error.message);
       });
 
@@ -91,11 +102,22 @@ class FormAutomator {
   }
 
   async runAutomation(jobId, formConfig, accounts, options) {
+    console.log(`🚀 Запуск автоматизации для задачи ${jobId}`);
+    console.log(`📊 Количество аккаунтов: ${accounts.length}`);
+    console.log(`📝 Конфигурация формы: ${formConfig.title}`);
+    
     const job = await this.jobModel.getById(jobId);
-    if (!job) return;
+    if (!job) {
+      console.error(`❌ Задача ${jobId} не найдена в базе данных`);
+      return;
+    }
+
+    console.log(`✅ Задача найдена: ${job.status}`);
 
     try {
+      console.log(`🌐 Инициализация браузера...`);
       const browser = await this.initBrowser();
+      console.log(`✅ Браузер инициализирован`);
       
       for (let i = 0; i < accounts.length; i++) {
         const account = accounts[i];
@@ -120,8 +142,9 @@ class FormAutomator {
           });
           
           // Обновляем счетчик завершенных аккаунтов
+          const updatedJob = await this.jobModel.getById(jobId);
           await this.jobModel.update(jobId, {
-            completedAccounts: job.completedAccounts + 1
+            completedAccounts: updatedJob.completedAccounts + 1
           });
           
           // Добавляем лог об успехе
@@ -142,8 +165,9 @@ class FormAutomator {
           });
           
           // Обновляем счетчик неудачных аккаунтов
+          const updatedJob = await this.jobModel.getById(jobId);
           await this.jobModel.update(jobId, {
-            failedAccounts: job.failedAccounts + 1
+            failedAccounts: updatedJob.failedAccounts + 1
           });
           
           // Добавляем лог об ошибке
