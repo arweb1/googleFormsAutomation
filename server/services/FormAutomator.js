@@ -1,6 +1,7 @@
 const puppeteer = require('puppeteer');
 const FormConfig = require('../models/FormConfig');
 const AccountManager = require('./AccountManager');
+const AutomationJob = require('../models/AutomationJob');
 const fs = require('fs-extra');
 const path = require('path');
 
@@ -8,6 +9,7 @@ class FormAutomator {
   constructor() {
     this.jobs = new Map();
     this.browser = null;
+    this.jobModel = new AutomationJob();
   }
 
   async initBrowser() {
@@ -55,24 +57,24 @@ class FormAutomator {
         });
       }
 
-      // Создаем задачу
-      const job = {
+      // Создаем задачу в базе данных
+      const job = await this.jobModel.create({
         id: jobId,
         formConfigId,
-        accountIds,
+        formTitle: formConfig.title,
         status: 'running',
-        startTime: new Date(),
-        endTime: null,
-        progress: {
-          total: accounts.length,
-          completed: 0,
-          failed: 0
-        },
-        results: [],
-        options
-      };
+        startTime: new Date().toISOString(),
+        totalAccounts: accounts.length,
+        completedAccounts: 0,
+        failedAccounts: 0,
+        loginMode: options.loginMode || 'anonymous'
+      });
 
-      this.jobs.set(jobId, job);
+      // Добавляем начальный лог
+      await this.jobModel.addLog(jobId, {
+        type: 'info',
+        message: `Запуск автоматизации для ${accounts.length} аккаунтов (${options.loginMode === 'google' ? 'с логином Google' : 'анонимно'})`
+      });
 
       // Запускаем автоматизацию в фоне
       this.runAutomation(jobId, formConfig, accounts, options).catch(error => {
@@ -89,7 +91,7 @@ class FormAutomator {
   }
 
   async runAutomation(jobId, formConfig, accounts, options) {
-    const job = this.jobs.get(jobId);
+    const job = await this.jobModel.getById(jobId);
     if (!job) return;
 
     try {
@@ -101,34 +103,56 @@ class FormAutomator {
         try {
           console.log(`Обрабатываем аккаунт ${i + 1}/${accounts.length}: ${account.email}`);
           
-          const result = await this.fillFormForAccount(browser, formConfig, account, options);
-          
-          job.results.push({
-            accountId: account.id,
-            email: account.email,
-            status: 'success',
-            timestamp: new Date(),
-            data: result
+          // Добавляем лог о начале обработки аккаунта
+          await this.jobModel.addLog(jobId, {
+            type: 'info',
+            message: `Обработка аккаунта ${i + 1}/${accounts.length}: ${account.email}`,
+            accountId: account.id
           });
           
-          job.progress.completed++;
+          const result = await this.fillFormForAccount(browser, formConfig, account, options);
+          
+          // Добавляем результат успешной обработки
+          await this.jobModel.addResult(jobId, {
+            accountId: account.id,
+            success: true,
+            submittedAt: result.submittedAt
+          });
+          
+          // Обновляем счетчик завершенных аккаунтов
+          await this.jobModel.update(jobId, {
+            completedAccounts: job.completedAccounts + 1
+          });
+          
+          // Добавляем лог об успехе
+          await this.jobModel.addLog(jobId, {
+            type: 'success',
+            message: `Аккаунт ${account.email} успешно обработан`,
+            accountId: account.id
+          });
           
         } catch (error) {
           console.error(`Ошибка для аккаунта ${account.email}:`, error);
           
-          job.results.push({
+          // Добавляем результат ошибки
+          await this.jobModel.addResult(jobId, {
             accountId: account.id,
-            email: account.email,
-            status: 'failed',
-            timestamp: new Date(),
+            success: false,
             error: error.message
           });
           
-          job.progress.failed++;
+          // Обновляем счетчик неудачных аккаунтов
+          await this.jobModel.update(jobId, {
+            failedAccounts: job.failedAccounts + 1
+          });
+          
+          // Добавляем лог об ошибке
+          await this.jobModel.addLog(jobId, {
+            type: 'error',
+            message: `Ошибка обработки аккаунта ${account.email}: ${error.message}`,
+            accountId: account.id
+          });
         }
-        
-        // Обновляем статус задачи
-        this.jobs.set(jobId, job);
         
         // Задержка между аккаунтами
         if (options.delay && options.delay > 0) {
@@ -137,11 +161,15 @@ class FormAutomator {
       }
       
       // Завершаем задачу
-      this.updateJobStatus(jobId, 'completed');
+      await this.updateJobStatus(jobId, 'completed');
+      await this.jobModel.addLog(jobId, {
+        type: 'success',
+        message: `Автоматизация завершена. Обработано: ${job.completedAccounts}, Ошибок: ${job.failedAccounts}`
+      });
       
     } catch (error) {
       console.error(`Критическая ошибка в задаче ${jobId}:`, error);
-      this.updateJobStatus(jobId, 'failed', error.message);
+      await this.updateJobStatus(jobId, 'failed', error.message);
     }
   }
 
@@ -606,38 +634,52 @@ class FormAutomator {
     }
   }
 
-  updateJobStatus(jobId, status, error = null) {
-    const job = this.jobs.get(jobId);
-    if (job) {
-      job.status = status;
-      job.endTime = new Date();
+  async updateJobStatus(jobId, status, error = null) {
+    try {
+      const updates = {
+        status,
+        endTime: new Date().toISOString()
+      };
+      
       if (error) {
-        job.error = error;
+        updates.error = error;
+        await this.jobModel.addLog(jobId, {
+          type: 'error',
+          message: error
+        });
       }
-      this.jobs.set(jobId, job);
+      
+      await this.jobModel.update(jobId, updates);
+    } catch (error) {
+      console.error('Ошибка обновления статуса задачи:', error);
     }
   }
 
   async getJobStatus(jobId) {
-    return this.jobs.get(jobId) || null;
+    return await this.jobModel.getById(jobId);
   }
 
   async stopJob(jobId) {
-    const job = this.jobs.get(jobId);
+    const job = await this.jobModel.getById(jobId);
     if (job && job.status === 'running') {
-      job.status = 'stopped';
-      job.endTime = new Date();
-      this.jobs.set(jobId, job);
+      await this.jobModel.update(jobId, { 
+        status: 'stopped',
+        endTime: new Date().toISOString()
+      });
+      await this.jobModel.addLog(jobId, {
+        type: 'info',
+        message: 'Задача остановлена пользователем'
+      });
     }
   }
 
   async getJobResults(jobId) {
-    const job = this.jobs.get(jobId);
+    const job = await this.jobModel.getById(jobId);
     return job ? job.results : [];
   }
 
   async getAllJobs() {
-    return Array.from(this.jobs.values());
+    return await this.jobModel.getAll();
   }
 
   sleep(ms) {
