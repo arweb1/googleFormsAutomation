@@ -50,6 +50,16 @@ const Automation = () => {
     submit: true,
     headless: false
   });
+  
+  // Настройки задержки между сабмитами
+  const [delaySettings, setDelaySettings] = useState({
+    enabled: true,
+    type: 'random', // 'fixed', 'random', 'progressive'
+    minDelay: 2000, // минимальная задержка в мс
+    maxDelay: 5000, // максимальная задержка в мс
+    fixedDelay: 3000, // фиксированная задержка в мс
+    progressiveMultiplier: 1.5 // множитель для прогрессивной задержки
+  });
   const [running, setRunning] = useState(false);
   const [error, setError] = useState(null);
   const [openOptions, setOpenOptions] = useState(false);
@@ -214,7 +224,8 @@ const Automation = () => {
       const automationOptions = {
         ...options,
         loginMode: loginMode,
-        accountData: accountData
+        accountData: accountData,
+        delaySettings: delaySettings
       };
       
       const response = await apiService.automation.start(
@@ -639,6 +650,11 @@ const Automation = () => {
       <Dialog open={openOptions} onClose={() => setOpenOptions(false)} maxWidth="sm" fullWidth>
         <DialogTitle>Настройки автоматизации</DialogTitle>
         <DialogContent>
+          {/* Основные настройки */}
+          <Typography variant="h6" sx={{ mb: 2 }}>
+            Основные настройки
+          </Typography>
+          
           <TextField
             autoFocus
             margin="dense"
@@ -670,8 +686,115 @@ const Automation = () => {
               />
             }
             label="Скрытый режим браузера"
-            sx={{ mb: 1 }}
+            sx={{ mb: 3 }}
           />
+
+          {/* Настройки задержки между сабмитами */}
+          <Typography variant="h6" sx={{ mb: 2 }}>
+            Задержка между сабмитами форм
+          </Typography>
+          
+          <FormControlLabel
+            control={
+              <Switch
+                checked={delaySettings.enabled}
+                onChange={(e) => setDelaySettings({ ...delaySettings, enabled: e.target.checked })}
+              />
+            }
+            label="Включить задержку между сабмитами"
+            sx={{ mb: 2 }}
+          />
+          
+          {delaySettings.enabled && (
+            <>
+              <FormControl fullWidth sx={{ mb: 2 }}>
+                <InputLabel>Тип задержки</InputLabel>
+                <Select
+                  value={delaySettings.type}
+                  onChange={(e) => setDelaySettings({ ...delaySettings, type: e.target.value })}
+                  label="Тип задержки"
+                >
+                  <MenuItem value="fixed">Фиксированная</MenuItem>
+                  <MenuItem value="random">Случайная</MenuItem>
+                  <MenuItem value="progressive">Прогрессивная</MenuItem>
+                </Select>
+              </FormControl>
+              
+              {delaySettings.type === 'fixed' && (
+                <TextField
+                  margin="dense"
+                  label="Фиксированная задержка (мс)"
+                  type="number"
+                  fullWidth
+                  variant="outlined"
+                  value={delaySettings.fixedDelay}
+                  onChange={(e) => setDelaySettings({ ...delaySettings, fixedDelay: parseInt(e.target.value) || 3000 })}
+                  sx={{ mb: 2 }}
+                />
+              )}
+              
+              {delaySettings.type === 'random' && (
+                <>
+                  <TextField
+                    margin="dense"
+                    label="Минимальная задержка (мс)"
+                    type="number"
+                    fullWidth
+                    variant="outlined"
+                    value={delaySettings.minDelay}
+                    onChange={(e) => setDelaySettings({ ...delaySettings, minDelay: parseInt(e.target.value) || 2000 })}
+                    sx={{ mb: 1 }}
+                  />
+                  <TextField
+                    margin="dense"
+                    label="Максимальная задержка (мс)"
+                    type="number"
+                    fullWidth
+                    variant="outlined"
+                    value={delaySettings.maxDelay}
+                    onChange={(e) => setDelaySettings({ ...delaySettings, maxDelay: parseInt(e.target.value) || 5000 })}
+                    sx={{ mb: 2 }}
+                  />
+                </>
+              )}
+              
+              {delaySettings.type === 'progressive' && (
+                <>
+                  <TextField
+                    margin="dense"
+                    label="Начальная задержка (мс)"
+                    type="number"
+                    fullWidth
+                    variant="outlined"
+                    value={delaySettings.minDelay}
+                    onChange={(e) => setDelaySettings({ ...delaySettings, minDelay: parseInt(e.target.value) || 2000 })}
+                    sx={{ mb: 1 }}
+                  />
+                  <TextField
+                    margin="dense"
+                    label="Максимальная задержка (мс)"
+                    type="number"
+                    fullWidth
+                    variant="outlined"
+                    value={delaySettings.maxDelay}
+                    onChange={(e) => setDelaySettings({ ...delaySettings, maxDelay: parseInt(e.target.value) || 5000 })}
+                    sx={{ mb: 1 }}
+                  />
+                  <TextField
+                    margin="dense"
+                    label="Множитель прогрессии"
+                    type="number"
+                    step="0.1"
+                    fullWidth
+                    variant="outlined"
+                    value={delaySettings.progressiveMultiplier}
+                    onChange={(e) => setDelaySettings({ ...delaySettings, progressiveMultiplier: parseFloat(e.target.value) || 1.5 })}
+                    sx={{ mb: 2 }}
+                  />
+                </>
+              )}
+            </>
+          )}
         </DialogContent>
         <DialogActions>
           <Button onClick={() => setOpenOptions(false)}>Отмена</Button>

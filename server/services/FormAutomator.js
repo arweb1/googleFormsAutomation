@@ -154,7 +154,7 @@ class FormAutomator {
             accountId: account.id
           });
           
-          const result = await this.fillFormForAccount(browser, formConfig, account, options);
+          const result = await this.fillFormForAccount(browser, formConfig, account, options, i);
           
           // Добавляем результат успешной обработки
           await this.jobModel.addResult(jobId, {
@@ -175,6 +175,18 @@ class FormAutomator {
             message: `Аккаунт ${account.email} успешно обработан`,
             accountId: account.id
           });
+          
+          // Добавляем лог о задержке между сабмитами
+          if (options.delaySettings && options.delaySettings.enabled) {
+            const submitDelay = this.calculateSubmitDelay(options.delaySettings, i);
+            if (submitDelay > 0) {
+              await this.jobModel.addLog(jobId, {
+                type: 'info',
+                message: `Задержка между сабмитами: ${submitDelay}мс (${options.delaySettings.type})`,
+                accountId: account.id
+              });
+            }
+          }
           
         } catch (error) {
           console.error(`Ошибка для аккаунта ${account.email}:`, error);
@@ -219,7 +231,7 @@ class FormAutomator {
     }
   }
 
-  async fillFormForAccount(browser, formConfig, account, options) {
+  async fillFormForAccount(browser, formConfig, account, options, accountIndex = 0) {
     const page = await browser.newPage();
     
     try {
@@ -264,6 +276,17 @@ class FormAutomator {
       await this.waitForSubmission(page);
       
       console.log('✅ Форма успешно отправлена!');
+      
+      // Задержка между сабмитами форм
+      if (options.delaySettings && options.delaySettings.enabled) {
+        const submitDelay = this.calculateSubmitDelay(options.delaySettings, accountIndex);
+        if (submitDelay > 0) {
+          console.log(`⏳ Задержка между сабмитами: ${submitDelay}мс (${options.delaySettings.type})`);
+          await this.sleep(submitDelay);
+          console.log('✅ Задержка завершена');
+        }
+      }
+      
       return {
         success: true,
         submittedAt: new Date()
@@ -807,6 +830,30 @@ class FormAutomator {
     });
     
     return data;
+  }
+
+  // Расчет задержки между сабмитами форм
+  calculateSubmitDelay(delaySettings, accountIndex = 0) {
+    if (!delaySettings || !delaySettings.enabled) {
+      return 0;
+    }
+
+    const { type, minDelay, maxDelay, fixedDelay, progressiveMultiplier } = delaySettings;
+
+    switch (type) {
+      case 'fixed':
+        return fixedDelay || 3000;
+        
+      case 'random':
+        return Math.floor(Math.random() * (maxDelay - minDelay + 1)) + minDelay;
+        
+      case 'progressive':
+        const progressiveDelay = minDelay * Math.pow(progressiveMultiplier, accountIndex);
+        return Math.min(progressiveDelay, maxDelay);
+        
+      default:
+        return 3000; // По умолчанию 3 секунды
+    }
   }
 
   async close() {
