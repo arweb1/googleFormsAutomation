@@ -12,12 +12,13 @@ class FormAutomator {
     this.jobModel = new AutomationJob();
   }
 
-  async initBrowser() {
+  async initBrowser(options = {}) {
     if (!this.browser) {
       try {
-        console.log(`🌐 Запуск браузера Puppeteer...`);
+        const headless = options.headless !== undefined ? options.headless : false;
+        console.log(`🌐 Запуск браузера Puppeteer... (headless: ${headless})`);
         this.browser = await puppeteer.launch({
-          headless: false, // Показываем браузер для отладки
+          headless: headless,
           args: [
             '--no-sandbox',
             '--disable-setuid-sandbox',
@@ -29,7 +30,7 @@ class FormAutomator {
           ],
           timeout: 30000
         });
-        console.log(`✅ Браузер успешно запущен`);
+        console.log(`✅ Браузер успешно запущен (headless: ${headless})`);
       } catch (error) {
         console.error(`❌ Ошибка запуска браузера:`, error);
         throw error;
@@ -125,6 +126,7 @@ class FormAutomator {
     console.log(`🚀 Запуск автоматизации для задачи ${jobId}`);
     console.log(`📊 Количество аккаунтов: ${accounts.length}`);
     console.log(`📝 Конфигурация формы: ${formConfig.title}`);
+    console.log(`⚙️ Опции:`, JSON.stringify(options, null, 2));
     
     const job = await this.jobModel.getById(jobId);
     if (!job) {
@@ -136,7 +138,7 @@ class FormAutomator {
 
     try {
       console.log(`🌐 Инициализация браузера...`);
-      const browser = await this.initBrowser();
+      const browser = await this.initBrowser(options);
       console.log(`✅ Браузер инициализирован`);
       
       // Добавляем лог о начале обработки
@@ -218,7 +220,11 @@ class FormAutomator {
         
         // Задержка между аккаунтами
         if (options.delay && options.delay > 0) {
+          console.log(`⏳ Задержка между аккаунтами: ${options.delay}мс`);
           await this.sleep(options.delay);
+          console.log(`✅ Задержка между аккаунтами завершена`);
+        } else {
+          console.log(`⚠️ Задержка между аккаунтами отключена (delay: ${options.delay})`);
         }
       }
       
