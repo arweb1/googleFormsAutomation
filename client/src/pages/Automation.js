@@ -28,7 +28,8 @@ import {
   Stop as StopIcon,
   Refresh as RefreshIcon,
   Settings as SettingsIcon,
-  Download as DownloadIcon
+  Download as DownloadIcon,
+  Delete as DeleteIcon
 } from '@mui/icons-material';
 import { apiService } from '../services/apiService';
 import AutomationProgress from '../components/AutomationProgress';
@@ -702,9 +703,25 @@ const Automation = () => {
                       return (
                         <Card key={account.id} sx={{ mb: 2 }}>
                           <CardContent>
-                            <Typography variant="subtitle1" gutterBottom>
-                              {account.name}
-                            </Typography>
+                            <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
+                              <Typography variant="subtitle1">
+                                {account.name}
+                              </Typography>
+                              <Button
+                                variant="outlined"
+                                color="error"
+                                size="small"
+                                startIcon={<DeleteIcon />}
+                                onClick={() => {
+                                  if (window.confirm(`Вы уверены, что хотите удалить аккаунт "${account.name}"?`)) {
+                                    const newAccountData = accountData.filter((_, index) => index !== accountIndex);
+                                    setAccountData(newAccountData);
+                                  }
+                                }}
+                              >
+                                Удалить
+                              </Button>
+                            </Box>
                             
                             <Grid container spacing={2}>
                               {form.fields.map((field) => (
