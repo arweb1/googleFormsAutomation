@@ -33,7 +33,7 @@ import {
   Schedule
 } from '@mui/icons-material';
 
-const AutomationProgress = ({ job, logs = [] }) => {
+const AutomationProgress = ({ job, logs = [], onStop }) => {
   if (!job) return null;
 
   const getStatusIcon = (status) => {
@@ -98,6 +98,20 @@ const AutomationProgress = ({ job, logs = [] }) => {
             variant="outlined"
           />
         </Box>
+
+        {/* Кнопка остановки активной задачи */}
+        {job.status === 'running' && (
+          <Box mb={2}>
+            <Chip
+              icon={<Stop />}
+              label="Остановить задачу"
+              color="error"
+              onClick={onStop}
+              variant="filled"
+              sx={{ cursor: 'pointer' }}
+            />
+          </Box>
+        )}
 
         {/* Основная информация о задаче */}
         <Box mb={2}>

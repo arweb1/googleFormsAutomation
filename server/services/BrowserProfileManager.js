@@ -32,14 +32,18 @@ class BrowserProfileManager {
   }
 
   async launchBrowserWithProfile(accountId, options = {}, proxySettings = null) {
-    // Очищаем старый профиль перед созданием нового
-    await this.cleanupProfile(accountId);
-    
+    // По умолчанию НЕ очищаем профиль, чтобы избежать долгого удаления и блокировок (Windows)
+    // Очистка включается только при явной опции options.resetProfile === true
+    const resetProfile = options && options.resetProfile === true;
+    if (resetProfile) {
+      await this.cleanupProfile(accountId);
+    }
     const profilePath = await this.createProfile(accountId, proxySettings);
     
         const launchOptions = {
           headless: options.headless !== undefined ? options.headless : false,
           userDataDir: profilePath,
+          defaultViewport: null,
           args: [
             '--no-sandbox',
             '--disable-setuid-sandbox',
@@ -63,7 +67,8 @@ class BrowserProfileManager {
             '--disable-backgrounding-occluded-windows',
             '--disable-renderer-backgrounding',
             '--disable-features=TranslateUI',
-            '--disable-ipc-flooding-protection'
+            '--disable-ipc-flooding-protection',
+            '--remote-debugging-port=0'
           ],
           timeout: 30000,
           ignoreHTTPSErrors: true,
@@ -96,16 +101,46 @@ class BrowserProfileManager {
       }
     }
 
-    // Запускаем браузер
-    try {
-      const browser = await puppeteer.launch(launchOptions);
-      this.activeBrowsers.set(accountId, browser);
-      console.log(`✅ Браузер запущен с профилем для аккаунта ${accountId}`);
-      return browser;
-    } catch (error) {
-      console.error(`❌ Ошибка запуска браузера для аккаунта ${accountId}:`, error.message);
-      throw error; // Не пробуем без прокси, если прокси нужен
+    // Запускаем браузер с ретраями и безопасным закрытием анонимного прокси при ошибке
+    const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));
+    const maxAttempts = 3;
+    let lastError = null;
+    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+      try {
+        const browser = await puppeteer.launch(launchOptions);
+        this.activeBrowsers.set(accountId, browser);
+        // Авто-уборка при нештатном завершении
+        browser.on('disconnected', async () => {
+          try {
+            this.activeBrowsers.delete(accountId);
+            const anonUrl = this.anonymizedProxyByAccountId.get(accountId);
+            if (anonUrl) {
+              await proxyChain.closeAnonymizedProxy(anonUrl).catch(() => {});
+              this.anonymizedProxyByAccountId.delete(accountId);
+            }
+          } catch (_) {}
+        });
+        console.log(`✅ Браузер запущен с профилем для аккаунта ${accountId} (попытка ${attempt}/${maxAttempts})`);
+        return browser;
+      } catch (error) {
+        lastError = error;
+        console.error(`❌ Ошибка запуска браузера для аккаунта ${accountId} (попытка ${attempt}/${maxAttempts}):`, error.message);
+        // На Windows возможны временные блокировки профиля/портов — подождем и попробуем ещё раз
+        if (attempt < maxAttempts) {
+          await sleep(1000 * attempt);
+          continue;
+        }
+      }
     }
+    // Если все попытки неудачны — закрываем анонимный прокси (если создавался) и пробрасываем ошибку
+    try {
+      const anonUrl = this.anonymizedProxyByAccountId.get(accountId);
+      if (anonUrl) {
+        await proxyChain.closeAnonymizedProxy(anonUrl).catch(() => {});
+        this.anonymizedProxyByAccountId.delete(accountId);
+      }
+    } catch (_) {}
+    throw lastError;
 
   }
 
@@ -178,6 +213,22 @@ class BrowserProfileManager {
             console.error(`❌ Ошибка остановки анонимизированного прокси для аккаунта ${accountId}:`, closeErr);
           }
         }
+        // Дополнительная очистка артефактов профиля, которые могут блокировать следующие запуски
+        try {
+          const profilePath = this.getProfilePath(accountId);
+          const artifacts = [
+            'DevToolsActivePort',
+            'SingletonLock',
+            'SingletonCookie',
+            'SingletonSocket'
+          ];
+          for (const name of artifacts) {
+            const p = path.join(profilePath, name);
+            if (await fs.pathExists(p)) {
+              await fs.remove(p).catch(() => {});
+            }
+          }
+        } catch (_) {}
       } catch (error) {
         console.error(`❌ Ошибка закрытия браузера для аккаунта ${accountId}:`, error);
       }
@@ -201,7 +252,7 @@ class BrowserProfileManager {
     // Останавливаем все анонимизированные прокси
     const stopProxyPromises = Array.from(this.anonymizedProxyByAccountId.entries()).map(async ([accountId, anonUrl]) => {
       try {
-        await proxyChain.closeAnonymizedProxy(anonUrl);
+        await proxyChain.closeAnonymizedProxy(anonUrl).catch(() => {});
         console.log(`🛑 Анонимизированный прокси остановлен для аккаунта ${accountId}`);
       } catch (error) {
         console.error(`❌ Ошибка остановки анонимизированного прокси для аккаунта ${accountId}:`, error);

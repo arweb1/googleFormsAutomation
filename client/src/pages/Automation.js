@@ -428,7 +428,7 @@ const Automation = () => {
           setActiveJob(job);
           
           // Если задача завершена, останавливаем мониторинг
-          if (job.status === 'completed' || job.status === 'failed') {
+          if (job.status === 'completed' || job.status === 'failed' || job.status === 'stopped') {
             clearInterval(interval);
             await loadJobs(); // Обновляем список задач
           }
@@ -830,7 +830,11 @@ const Automation = () => {
           {/* Прогресс активной задачи */}
           {activeJob && (
             <Grid item xs={12}>
-              <AutomationProgress job={activeJob} logs={jobLogs} />
+              <AutomationProgress 
+                job={activeJob} 
+                logs={jobLogs} 
+                onStop={() => handleStopJob(activeJob.id)}
+              />
             </Grid>
           )}
 

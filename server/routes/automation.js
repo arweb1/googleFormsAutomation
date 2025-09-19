@@ -1,6 +1,6 @@
 const express = require('express');
 const router = express.Router();
-const FormAutomator = require('../services/FormAutomator');
+const automator = require('../services/AutomatorInstance');
 
 // Запуск автоматического заполнения
 router.post('/start', async (req, res) => {
@@ -26,7 +26,6 @@ router.post('/start', async (req, res) => {
       });
     }
 
-    const automator = new FormAutomator();
     const jobId = await automator.startAutomation(formConfigId, accountIds, options);
     
     res.json({
@@ -48,7 +47,6 @@ router.get('/status/:jobId', async (req, res) => {
   try {
     const { jobId } = req.params;
     
-    const automator = new FormAutomator();
     const status = await automator.getJobStatus(jobId);
     
     if (!status) {
@@ -73,7 +71,6 @@ router.post('/stop/:jobId', async (req, res) => {
   try {
     const { jobId } = req.params;
     
-    const automator = new FormAutomator();
     await automator.stopJob(jobId);
     
     res.json({
@@ -94,7 +91,6 @@ router.get('/results/:jobId', async (req, res) => {
   try {
     const { jobId } = req.params;
     
-    const automator = new FormAutomator();
     const results = await automator.getJobResults(jobId);
     
     res.json({
@@ -113,7 +109,6 @@ router.get('/results/:jobId', async (req, res) => {
 // Получение всех активных задач
 router.get('/jobs', async (req, res) => {
   try {
-    const automator = new FormAutomator();
     const jobs = await automator.getAllJobs();
     
     res.json({
@@ -132,7 +127,6 @@ router.get('/jobs', async (req, res) => {
 // Очистка истории задач
 router.delete('/clear-history', async (req, res) => {
   try {
-    const automator = new FormAutomator();
     await automator.clearHistory();
     
     res.json({
