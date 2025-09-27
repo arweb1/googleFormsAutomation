@@ -24,7 +24,7 @@ class FormAutomator {
   async initBrowser(options = {}) {
     if (!this.browser) {
       try {
-        const headless = options.headless !== undefined ? options.headless : false;
+        const headless = options.headless !== undefined ? options.headless : false;ачио 
         console.log(`🌐 Запуск браузера Puppeteer... (headless: ${headless})`);
         
         const browserOptions = {
@@ -1226,36 +1226,137 @@ class FormAutomator {
       // Используем более точный подход для поиска поля
       let filled = false;
       
-      // Сначала пробуем найти поле по индексу (порядку на странице)
+      // НОВАЯ ЛОГИКА: Ищем поле по его уникальным характеристикам
       const allInputs = await page.$$('input[type="text"], textarea');
-      const fieldIndex = formConfig.fields.indexOf(field);
+      console.log(`🔍 Найдено ${allInputs.length} текстовых полей на странице`);
       
-      if (allInputs.length > fieldIndex) {
+      for (let i = 0; i < allInputs.length; i++) {
+        const input = allInputs[i];
+        
         try {
-          await allInputs[fieldIndex].click();
-          await allInputs[fieldIndex].type(value);
-          console.log(`✅ Успешно заполнено поле ${field.title} по индексу ${fieldIndex}`);
-          filled = true;
+          // Получаем информацию о поле
+          const inputInfo = await page.evaluate(el => {
+            const rect = el.getBoundingClientRect();
+            
+            // Ищем родительский контейнер с вопросом
+            let parent = el.closest('[role="group"], .freebirdFormviewerViewItemsItemItem, [data-item-id]') || 
+                        el.closest('div').parentElement;
+            
+            let parentText = '';
+            let questionText = '';
+            
+            if (parent) {
+              parentText = parent.textContent.trim();
+              
+              // Расширенный поиск текста вопроса
+              const titleSelectors = [
+                'h2', 'h3', '[role="heading"]', 
+                '.freebirdFormviewerViewItemsItemItemTitle', 
+                '.freebirdFormviewerViewItemsItemItemTitleText', 
+                'span[dir="auto"]',
+                '.aDTYNe', '.snByac', '.OvPDhc', '.OIC90c',
+                'div[role="heading"]',
+                'span:not([class*="answer"]):not([class*="Your"])'
+              ];
+              
+              for (const selector of titleSelectors) {
+                const titleEl = parent.querySelector(selector);
+                if (titleEl && titleEl.textContent.trim()) {
+                  const text = titleEl.textContent.trim();
+                  // Исключаем технические тексты
+                  if (!text.includes('Your answer') && 
+                      !text.includes('Required') && 
+                      !text.includes('Optional') &&
+                      text.length > 2 && text.length < 200) {
+                    questionText = text;
+                    break;
+                  }
+                }
+              }
+              
+              // Если не нашли в заголовках, ищем в родительском элементе
+              if (!questionText) {
+                const allTextElements = parent.querySelectorAll('span, div, p, label');
+                for (const textEl of allTextElements) {
+                  const text = textEl.textContent.trim();
+                  if (text && text.length > 2 && text.length < 200 &&
+                      !text.includes('Your answer') &&
+                      !text.includes('Required') &&
+                      !text.includes('Optional') &&
+                      !text.includes('Submit') &&
+                      !text.includes('Clear form') &&
+                      !text.includes('Record my email') &&
+                      textEl.offsetParent !== null) {
+                    questionText = text;
+                    break;
+                  }
+                }
+              }
+            }
+            
+            return {
+              name: el.name,
+              placeholder: el.placeholder,
+              ariaLabel: el.getAttribute('aria-label'),
+              parentText: parentText,
+              questionText: questionText,
+              visible: rect.width > 0 && rect.height > 0,
+              className: el.className
+            };
+          }, input);
+          
+          console.log(`🔍 Поле ${i}: parentText="${inputInfo.parentText.substring(0, 50)}..."`);
+          console.log(`🔍 Поле ${i}: questionText="${inputInfo.questionText}"`);
+          
+          // Проверяем, подходит ли это поле по названию
+          const fieldTitleLower = field.title.toLowerCase();
+          const parentTextLower = inputInfo.parentText.toLowerCase();
+          const questionTextLower = inputInfo.questionText.toLowerCase();
+          
+          // Более точное сопоставление названий
+          const isMatch = questionTextLower.includes(fieldTitleLower) || 
+                         fieldTitleLower.includes(questionTextLower) ||
+                         parentTextLower.includes(fieldTitleLower) || 
+                         fieldTitleLower.includes(parentTextLower.substring(0, 30));
+          
+          // Дополнительная проверка для корейских текстов
+          const koreanMatch = fieldTitleLower.includes('코백남') && questionTextLower.includes('코백남') ||
+                             fieldTitleLower.includes('트윗') && questionTextLower.includes('트윗') ||
+                             fieldTitleLower.includes('지갑') && questionTextLower.includes('지갑');
+          
+          if (isMatch || koreanMatch) {
+            await input.click();
+            await input.type(value);
+            console.log(`✅ Успешно заполнено поле ${field.title} по названию (индекс ${i})`);
+            console.log(`   Совпадение: questionText="${inputInfo.questionText}"`);
+            filled = true;
+            break;
+          }
+          
         } catch (error) {
-          console.log(`❌ Не удалось заполнить поле ${field.title} по индексу: ${error.message}`);
+          console.log(`❌ Ошибка при проверке поля ${i}: ${error.message}`);
+          continue;
         }
       }
       
-      // Если не получилось по индексу, пробуем другие селекторы
+      // Если не получилось по названию, пробуем другие селекторы
       if (!filled) {
+        console.log(`⚠️ Поиск по названию не сработал для поля ${field.title}, используем резервную логику`);
+        
+        // Получаем индекс поля в конфигурации
+        const fieldIndex = formConfig.fields.indexOf(field);
+        console.log(`📊 Индекс поля ${field.title} в конфигурации: ${fieldIndex}`);
+        
         const selectors = [
           selector, // Оригинальный селектор
           'input[aria-label*="' + field.title + '"]', // По aria-label
           'input[placeholder*="' + field.title + '"]', // По placeholder
-          '.whsOnd.zHQkBf', // Класс для полей Google Forms
-          'input[type="text"]' // Общий селектор для текстовых полей
         ];
 
         for (const sel of selectors) {
           try {
             const elements = await page.$$(sel);
             if (elements.length > 0) {
-              // Берем первый доступный элемент
               await elements[0].click();
               await elements[0].type(value);
               console.log(`✅ Успешно заполнено поле ${field.title} селектором: ${sel}`);
@@ -1265,6 +1366,33 @@ class FormAutomator {
           } catch (error) {
             console.log(`❌ Селектор ${sel} не сработал: ${error.message}`);
             continue;
+          }
+        }
+        
+        // Если все еще не заполнено, используем индекс для Google Forms полей
+        if (!filled) {
+          try {
+            const googleFormsInputs = await page.$$('.whsOnd.zHQkBf');
+            console.log(`🔍 Найдено ${googleFormsInputs.length} полей Google Forms`);
+            
+            // ИСПРАВЛЕНИЕ: Вычисляем правильный индекс для текстовых полей
+            // Исключаем радиокнопки из подсчета индекса
+            const textFieldsInConfig = formConfig.fields.filter(f => f.type === 'text' || f.type === 'textarea');
+            const currentFieldIndex = textFieldsInConfig.indexOf(field);
+            
+            console.log(`📊 Текстовых полей в конфигурации: ${textFieldsInConfig.length}`);
+            console.log(`📊 Индекс текущего поля в текстовых полях: ${currentFieldIndex}`);
+            
+            if (googleFormsInputs.length > currentFieldIndex && currentFieldIndex >= 0) {
+              await googleFormsInputs[currentFieldIndex].click();
+              await googleFormsInputs[currentFieldIndex].type(value);
+              console.log(`✅ Успешно заполнено поле ${field.title} по индексу ${currentFieldIndex} (Google Forms)`);
+              filled = true;
+            } else {
+              console.log(`❌ Не удалось заполнить поле ${field.title} - индекс ${currentFieldIndex} вне диапазона`);
+            }
+          } catch (error) {
+            console.log(`❌ Ошибка при заполнении по индексу: ${error.message}`);
           }
         }
       }
@@ -1313,7 +1441,17 @@ class FormAutomator {
       const selectors = [
         `input[name="${field.name}"][value="${value}"]`,
         `input[name="${field.name}"][type="radio"]`,
-        `input[type="radio"]`
+        `input[type="radio"]`,
+        // Дополнительные селекторы для современных Google Forms
+        `[role="radio"][aria-label="${value}"]`,
+        `[role="radio"][data-value="${value}"]`,
+        `[role="radio"]`,
+        // Селекторы по тексту в span элементах
+        `[role="radio"]:has-text("${value}")`,
+        `input[type="radio"]:has-text("${value}")`,
+        // Селекторы для конкретной структуры Google Forms
+        `div[jscontroller="D8e5bc"][role="radio"]`,
+        `div.Od2TWd[role="radio"]`
       ];
       
       let clicked = false;
@@ -1324,9 +1462,32 @@ class FormAutomator {
             // Ищем элемент с нужным значением
             for (const element of elements) {
               const elementValue = await page.evaluate(el => el.value, element);
-              if (elementValue === value) {
+              const ariaLabel = await page.evaluate(el => el.getAttribute('aria-label'), element);
+              const dataValue = await page.evaluate(el => el.getAttribute('data-value'), element);
+              const textContent = await page.evaluate(el => el.textContent, element);
+              
+              // Для современных Google Forms ищем текст в соседних span элементах
+              let spanText = '';
+              try {
+                const parent = await page.evaluateHandle(el => el.closest('div'), element);
+                if (parent) {
+                  const textSpan = await parent.$('span.aDTYNe, span.snByac, span.OvPDhc, span.OIC90c, span[dir="auto"]');
+                  if (textSpan) {
+                    spanText = await page.evaluate(el => el.textContent.trim(), textSpan);
+                  }
+                }
+              } catch (error) {
+                // Игнорируем ошибки поиска span
+              }
+              
+              // Проверяем совпадение по значению, aria-label, data-value, тексту или span тексту
+              if (elementValue === value || 
+                  ariaLabel === value || 
+                  dataValue === value ||
+                  textContent.trim() === value ||
+                  spanText === value) {
                 await element.click();
-                console.log(`✅ Радио-кнопка "${value}" выбрана`);
+                console.log(`✅ Радио-кнопка "${value}" выбрана (найдена по: ${elementValue === value ? 'value' : ariaLabel === value ? 'aria-label' : dataValue === value ? 'data-value' : spanText === value ? 'span-text' : 'text-content'})`);
                 clicked = true;
                 break;
               }
@@ -1339,8 +1500,49 @@ class FormAutomator {
         }
       }
       
+      // Если не удалось найти по селекторам, пробуем найти по тексту на странице
+      if (!clicked) {
+        try {
+          // Ищем все элементы с role="radio" и проверяем их aria-label
+          const radioElements = await page.$$('[role="radio"]');
+          for (const element of radioElements) {
+            const ariaLabel = await page.evaluate(el => el.getAttribute('aria-label'), element);
+            if (ariaLabel && ariaLabel.includes(value)) {
+              await element.click();
+              console.log(`✅ Радио-кнопка найдена по aria-label: "${ariaLabel}"`);
+              clicked = true;
+              break;
+            }
+          }
+        } catch (error) {
+          console.log(`❌ Поиск по aria-label не сработал: ${error.message}`);
+        }
+      }
+      
+      // Если все еще не найдено, пробуем найти по позиции (если есть только одна опция)
+      if (!clicked && field.options && field.options.length === 1) {
+        try {
+          const radioElements = await page.$$('[role="radio"], input[type="radio"]');
+          if (radioElements.length === 1) {
+            await radioElements[0].click();
+            console.log(`✅ Единственная радио-кнопка выбрана`);
+            clicked = true;
+          }
+        } catch (error) {
+          console.log(`❌ Поиск единственной радио-кнопки не сработал: ${error.message}`);
+        }
+      }
+      
       if (!clicked) {
         console.log(`❌ Не удалось выбрать радио-кнопку "${value}"`);
+        // Дополнительная отладка
+        const allRadios = await page.$$('[role="radio"], input[type="radio"]');
+        console.log(`Найдено радио-кнопок на странице: ${allRadios.length}`);
+        for (let i = 0; i < allRadios.length; i++) {
+          const ariaLabel = await page.evaluate(el => el.getAttribute('aria-label'), allRadios[i]);
+          const value = await page.evaluate(el => el.value, allRadios[i]);
+          console.log(`  Радио-кнопка ${i + 1}: aria-label="${ariaLabel}", value="${value}"`);
+        }
       }
       
     } catch (error) {
@@ -2228,8 +2430,14 @@ class FormAutomator {
         case 'select':
         case 'radio':
           if (field.options && field.options.length > 0) {
-            const randomOption = field.options[Math.floor(Math.random() * field.options.length)];
-            data[fieldName] = randomOption.value;
+            // Для радиокнопок с одной опцией всегда выбираем эту опцию
+            if (field.type === 'radio' && field.options.length === 1) {
+              data[fieldName] = field.options[0].value;
+            } else {
+              // Для множественных опций выбираем случайную
+              const randomOption = field.options[Math.floor(Math.random() * field.options.length)];
+              data[fieldName] = randomOption.value;
+            }
           }
           break;
           

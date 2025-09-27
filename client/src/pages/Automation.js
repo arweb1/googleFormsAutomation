@@ -188,7 +188,7 @@ const Automation = () => {
           case 'textarea':
             return 'Пример текста';
           default:
-            return `Пример_${field.id}`;
+            return `Пример_${field.title || field.id}`;
         }
       })],
       ['Аккаунт 2', ...form.fields.map(field => {
@@ -208,7 +208,7 @@ const Automation = () => {
           case 'textarea':
             return 'Пример текста 2';
           default:
-            return `Пример_${field.id}_2`;
+            return `Пример_${field.title || field.id}_2`;
         }
       })]
     ];
@@ -295,7 +295,6 @@ const Automation = () => {
                 case 'radio':
                 case 'select':
                   // Радиокнопки и селекты: используем значение как есть
-                  value = value;
                   break;
                 case 'number':
                   // Числа: преобразуем в число
@@ -303,7 +302,6 @@ const Automation = () => {
                   break;
                 default:
                   // Текстовые поля: используем как есть
-                  value = value;
               }
               
               account.fields[field.id] = value;

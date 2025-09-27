@@ -318,15 +318,43 @@ const Forms = () => {
                       <CardContent sx={{ p: 2 }}>
                         <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', mb: 1 }}>
                           <Typography variant="subtitle2" noWrap>
-                            {field.name || field.id}
+                            {field.title || field.name || field.id}
                           </Typography>
                           {field.required && (
                             <Chip label="Обязательное" size="small" color="error" />
                           )}
                         </Box>
-                        <Typography variant="caption" color="text.secondary">
-                          {field.type}
+                        <Typography variant="caption" color="text.secondary" sx={{ mb: 1, display: 'block' }}>
+                          Тип: {field.type}
                         </Typography>
+                        
+                        {/* Отображение опций для радиокнопок, чекбоксов и select */}
+                        {(field.type === 'radio' || field.type === 'checkbox' || field.type === 'select') && field.options && field.options.length > 0 && (
+                          <Box sx={{ mt: 1 }}>
+                            <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mb: 0.5 }}>
+                              Опции ({field.options.length}):
+                            </Typography>
+                            {field.options.map((option, optIndex) => (
+                              <Chip
+                                key={optIndex}
+                                label={option.label}
+                                size="small"
+                                variant="outlined"
+                                sx={{ mr: 0.5, mb: 0.5, fontSize: '0.7rem' }}
+                              />
+                            ))}
+                          </Box>
+                        )}
+                        
+                        {/* Специальная информация для радиокнопок с одной опцией */}
+                        {field.type === 'radio' && field.options && field.options.length === 1 && (
+                          <Chip
+                            label="Одна опция - всегда выбирается"
+                            size="small"
+                            color="info"
+                            sx={{ mt: 1, fontSize: '0.7rem' }}
+                          />
+                        )}
                       </CardContent>
                     </Card>
                   </Grid>
