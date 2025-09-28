@@ -162,6 +162,11 @@ class FormAutomator {
       // Инициализируем токен отмены
       this.cancellationTokens.set(jobId, { cancelled: false });
 
+      // Настраиваем конкурренси
+      const desiredConcurrency = Math.max(1, Math.min(8, Number(options.concurrency) || 1));
+      this.maxConcurrentBrowsers = desiredConcurrency;
+      console.log(`🧵 Конкурентность установлена: ${this.maxConcurrentBrowsers}`);
+
       // Запускаем автоматизацию в фоне
       console.log(`🚀 Запуск автоматизации в фоновом режиме...`);
       this.runAutomation(jobId, formConfig, accounts, options).catch(error => {
@@ -219,6 +224,22 @@ class FormAutomator {
     console.log(`✅ Задача найдена: ${job.status}`);
 
     try {
+      // Если конкурренси больше 1 — запускаем пул воркеров с джиттером
+      if (this.maxConcurrentBrowsers > 1) {
+        console.log(`🧵 Запуск пула воркеров: ${this.maxConcurrentBrowsers}`);
+        await this.runAutomationWithConcurrency(jobId, formConfig, accounts, options, this.maxConcurrentBrowsers);
+        // После пула — те же завершающие действия
+        const tokenEnd = this.cancellationTokens.get(jobId);
+        const finalStatus = tokenEnd && tokenEnd.cancelled ? 'stopped' : 'completed';
+        await this.updateJobStatus(jobId, finalStatus);
+        await this.jobModel.addLog(jobId, {
+          type: finalStatus === 'stopped' ? 'warning' : 'success',
+          message: finalStatus === 'stopped' ? `Задача остановлена пользователем` : `Автоматизация завершена. Обработано: ${job.completedAccounts}, Ошибок: ${job.failedAccounts}`
+        });
+        this.usedProxies.delete(jobId);
+        await this.profileManager.closeAllBrowsers();
+        return;
+      }
       // Добавляем лог о начале обработки
       await this.jobModel.addLog(jobId, {
         type: 'info',
@@ -575,6 +596,89 @@ class FormAutomator {
         sound: true
       });
     }
+  }
+
+  // Новый метод: конкурентная обработка аккаунтов пулом воркеров
+  async runAutomationWithConcurrency(jobId, formConfig, accounts, options, concurrency) {
+    const queue = accounts.map((account, index) => ({ account, index }));
+    let current = 0;
+
+    const worker = async (workerId) => {
+      // Джиттер старта воркера, чтобы потоки шли не синхронно
+      const startJitter = 500 + Math.floor(Math.random() * 2000);
+      console.log(`🧵 Воркер ${workerId} стартует через ${startJitter}мс`);
+      await this.sleep(startJitter);
+
+      while (true) {
+        // Получаем следующий элемент очереди
+        let task;
+        if (current < queue.length) {
+          task = queue[current++];
+        } else {
+          break;
+        }
+
+        const { account, index } = task;
+        const token = this.cancellationTokens.get(jobId);
+        if (token && token.cancelled) {
+          console.log(`🛑 Воркер ${workerId}: задача отменена, выходим`);
+          break;
+        }
+
+        try {
+          console.log(`🧵 Воркер ${workerId}: начинаю аккаунт ${index + 1}/${accounts.length} (${account.email})`);
+          const result = await this.fillFormForAccountWithProfile(formConfig, account, options, index, jobId);
+
+          await this.jobModel.addResult(jobId, {
+            accountId: account.id,
+            accountName: account.name,
+            accountEmail: account.email,
+            success: result?.success || false,
+            submittedAt: result?.submittedAt || new Date().toISOString(),
+            filledData: account.fields,
+            skipped: result?.skipped || false,
+            message: result?.message || (result?.success ? 'Успешно заполнено' : 'Ошибка заполнения'),
+            error: result?.error || null
+          });
+
+          const job = await this.jobModel.getById(jobId);
+          await this.jobModel.update(jobId, {
+            completedAccounts: job.completedAccounts + (result?.success ? 1 : 0),
+            failedAccounts: job.failedAccounts + (!result?.success ? 1 : 0)
+          });
+
+          const delaySettings = options.delaySettings;
+          if (delaySettings && delaySettings.enabled) {
+            const submitDelay = this.calculateSubmitDelay(delaySettings, index);
+            if (submitDelay > 0) {
+              console.log(`🧵 Воркер ${workerId}: задержка после аккаунта ${submitDelay}мс`);
+              await this.sleep(submitDelay);
+            }
+          }
+
+          // Небольшой джиттер между задачами у воркера
+          const perWorkerJitter = 200 + Math.floor(Math.random() * 800);
+          await this.sleep(perWorkerJitter);
+        } catch (err) {
+          console.error(`❌ Воркер ${workerId}: ошибка обработки аккаунта ${account.email}:`, err);
+          await this.jobModel.addResult(jobId, {
+            accountId: account.id,
+            accountName: account.name,
+            accountEmail: account.email,
+            success: false,
+            submittedAt: new Date().toISOString(),
+            filledData: account.fields,
+            skipped: false,
+            message: 'Ошибка заполнения',
+            error: err.message || String(err)
+          });
+        }
+      }
+    };
+
+    // Запускаем воркеры
+    const workers = Array.from({ length: concurrency }, (_, i) => worker(i + 1));
+    await Promise.all(workers);
   }
 
   async fillFormForAccountWithProfile(formConfig, account, options, accountIndex = 0, jobId = null) {

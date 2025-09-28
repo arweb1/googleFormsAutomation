@@ -52,7 +52,8 @@ const Automation = () => {
   const [options, setOptions] = useState({
     delay: 1000,
     submit: true,
-    headless: false
+    headless: false,
+    concurrency: 1
   });
   
   
@@ -942,6 +943,21 @@ const Automation = () => {
             variant="outlined"
             value={options.delay}
             onChange={(e) => setOptions({ ...options, delay: parseInt(e.target.value) || 1000 })}
+            sx={{ mb: 2 }}
+          />
+
+          <TextField
+            margin="dense"
+            label="Количество потоков"
+            type="number"
+            fullWidth
+            variant="outlined"
+            value={options.concurrency}
+            onChange={(e) => {
+              const v = Math.max(1, Math.min(8, parseInt(e.target.value) || 1));
+              setOptions({ ...options, concurrency: v });
+            }}
+            helperText="1-8 потоков. Бóльшее число может вызывать блокировки и нагрузку."
             sx={{ mb: 2 }}
           />
           
