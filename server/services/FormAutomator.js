@@ -177,6 +177,32 @@ class FormAutomator {
     }
   }
 
+  // Явное ожидание появления экрана челенджа и возврат найденного контейнера
+  async waitForChallenge(page, timeoutMs = 20000) {
+    const start = Date.now();
+    const selectors = [
+      'div[id*="challenge"]',
+      'div[data-challengetype]',
+      'input[name="idvAnyPhonePin"]',
+      'div[aria-label*="2-Step Verification" i]',
+      'form[action*="challenge"]'
+    ];
+    while (Date.now() - start < timeoutMs) {
+      for (const sel of selectors) {
+        const el = await page.$(sel);
+        if (el) {
+          const visible = await page.evaluate(e => {
+            const r = e.getBoundingClientRect();
+            return r.width > 0 && r.height > 0 && getComputedStyle(e).visibility !== 'hidden';
+          }, el).catch(() => false);
+          if (visible) return el;
+        }
+      }
+      await page.waitForTimeout(500);
+    }
+    throw new Error('Экран верификации не появился вовремя');
+  }
+
   async runAutomation(jobId, formConfig, accounts, options) {
     console.log(`🚀 Запуск автоматизации для задачи ${jobId}`);
     console.log(`📊 Количество аккаунтов: ${accounts.length}`);
@@ -251,7 +277,6 @@ class FormAutomator {
           console.log(`📊 Прогресс: ${globalIndex}/${accounts.length} (${Math.round((globalIndex/accounts.length)*100)}%)`);
           console.log(`📦 Пакет: ${batchIndex + 1}/${totalBatches}, Позиция в пакете: ${i + 1}/${batch.length}`);
           
-          try {
           console.log(`\n🚀 Начинаем обработку аккаунта ${globalIndex + 1}/${accounts.length}: ${account.email}`);
           console.log(`📊 Всего аккаунтов для обработки: ${accounts.length}`);
           
@@ -341,23 +366,59 @@ class FormAutomator {
           
           const result = await this.fillFormForAccountWithProfile(formConfig, account, options, globalIndex, jobId);
           
-          // Добавляем результат обработки
+          // Проверяем, что результат не undefined
+          if (!result) {
+            console.error(`❌ Метод fillFormForAccountWithProfile вернул undefined для аккаунта ${account.id}`);
+            await this.jobModel.addResult(jobId, {
+              accountId: account.id,
+              accountName: account.name,
+              accountEmail: account.email,
+              success: false,
+              error: 'Метод fillFormForAccountWithProfile вернул undefined',
+              submittedAt: new Date().toISOString(),
+              filledData: account.fields
+            });
+            
+            // Обновляем счетчик неудачных аккаунтов
+            const updatedJob = await this.jobModel.getById(jobId);
+            await this.jobModel.update(jobId, {
+              failedAccounts: updatedJob.failedAccounts + 1
+            });
+            
+            continue; // Переходим к следующему аккаунту
+          }
+          
+          // Добавляем результат обработки (универсальный для успеха и ошибки)
           await this.jobModel.addResult(jobId, {
             accountId: account.id,
             accountName: account.name,
             accountEmail: account.email,
-            success: true,
-            submittedAt: result.submittedAt,
-            filledData: account.fields, // Данные, которыми заполнялась форма
+            success: result.success,
+            submittedAt: result.submittedAt || new Date().toISOString(),
+            filledData: account.fields,
             skipped: result.skipped || false,
-            message: result.message || 'Успешно заполнено'
+            message: result.message || (result.success ? 'Успешно заполнено' : 'Ошибка заполнения'),
+            error: result.error || null
           });
           
-          // Обновляем счетчик завершенных аккаунтов
+          // Обновляем счетчики в зависимости от результата
           const updatedJob = await this.jobModel.getById(jobId);
-          await this.jobModel.update(jobId, {
-            completedAccounts: updatedJob.completedAccounts + 1
-          });
+          if (result.success) {
+            await this.jobModel.update(jobId, {
+              completedAccounts: updatedJob.completedAccounts + 1
+            });
+          } else {
+            await this.jobModel.update(jobId, {
+              failedAccounts: updatedJob.failedAccounts + 1
+            });
+            
+            // Добавляем лог об ошибке
+            await this.jobModel.addLog(jobId, {
+              type: 'error',
+              message: `Ошибка обработки аккаунта ${account.email}: ${result.error || 'Неизвестная ошибка'}`,
+              accountId: account.id
+            });
+          }
           
           // Добавляем лог об успехе
           const logMessage = result.skipped 
@@ -418,58 +479,6 @@ class FormAutomator {
             console.log(`🧹 Очистка памяти выполнена`);
           }
           
-        } catch (error) {
-          console.error(`❌ Ошибка для аккаунта ${account.email}:`, error);
-          console.log(`📊 Продолжаем обработку остальных аккаунтов... (${globalIndex + 1}/${accounts.length})`);
-          
-          // Добавляем результат ошибки
-          await this.jobModel.addResult(jobId, {
-            accountId: account.id,
-            accountName: account.name,
-            accountEmail: account.email,
-            success: false,
-            error: error.message,
-            filledData: account.fields // Данные, которыми пытались заполнить форму
-          });
-          
-          // Обновляем счетчик неудачных аккаунтов
-          const updatedJob = await this.jobModel.getById(jobId);
-          await this.jobModel.update(jobId, {
-            failedAccounts: updatedJob.failedAccounts + 1
-          });
-          
-          // Добавляем лог об ошибке
-          await this.jobModel.addLog(jobId, {
-            type: 'error',
-            message: `Ошибка обработки аккаунта ${account.email}: ${error.message}`,
-            accountId: account.id
-          });
-
-          // Задержка между аккаунтами даже при ошибке (кроме последнего в пакете)
-          if (i < batch.length - 1) {
-            const accountDelay = options.delay || 1000;
-            console.log(`⏳ Задержка между аккаунтами после ошибки: ${accountDelay}мс`);
-            await this.jobModel.addLog(jobId, {
-              type: 'info',
-              message: `Задержка между аккаунтами после ошибки: ${accountDelay}мс`
-            });
-            await this.sleep(accountDelay);
-            console.log(`✅ Задержка между аккаунтами завершена`);
-          }
-          
-          // Принудительно обновляем статус задачи даже при ошибке
-          await this.jobModel.update(jobId, {
-            failedAccounts: (await this.jobModel.getById(jobId)).failedAccounts,
-            status: 'running'
-          });
-          console.log(`📊 Обновлен статус задачи после ошибки: ${globalIndex + 1}/${accounts.length} обработано`);
-          
-          // Очистка памяти после ошибки
-          if (global.gc) {
-            global.gc();
-            console.log(`🧹 Очистка памяти выполнена после ошибки`);
-          }
-        }
         
         // Добавляем лог о завершении обработки аккаунта
         console.log(`🏁 Завершена обработка аккаунта ${globalIndex + 1}/${accounts.length}: ${account.email}`);
@@ -668,7 +677,9 @@ class FormAutomator {
       
       // Запускаем браузер с профилем для этого аккаунта
       console.log(`🌐 Запуск браузера с профилем для аккаунта: ${account.id}`);
-      console.log(`📊 Опции браузера:`, JSON.stringify(options, null, 2));
+      // Логи без вывода огромного объекта options (который включает весь список аккаунтов)
+      const optionsSummary = `headless=${options.headless !== undefined ? options.headless : false}, loginMode=${options.loginMode || 'anonymous'}, resetProfile=${options.resetProfile === true}, proxyGroup=${options.selectedProxyGroup || 'none'}`;
+      console.log(`⚙️ Опции браузера: ${optionsSummary}`);
       console.log(`🔗 Настройки прокси:`, proxySettings ? 'Настроены' : 'Не настроены');
       
       try {
@@ -694,18 +705,34 @@ class FormAutomator {
       if ((options.loginMode === 'google')) {
         const loginEmail = (account.googleAccount && account.googleAccount.email) || account.email;
         const loginPassword = (account.googleAccount && account.googleAccount.password) || account.password;
+        const backupEmail =
+          (account.googleAccount && account.googleAccount.data && account.googleAccount.data.backupEmail) ||
+          (account.googleAccount && account.googleAccount.backupEmail) ||
+          (account.data && account.data.backupEmail) ||
+          account.backupEmail ||
+          null;
 
         if (!loginEmail || !loginPassword) {
           throw new Error('У аккаунта отсутствуют email или пароль для входа в Google');
         }
 
         console.log(`🔐 Авторизация в Google для аккаунта: ${loginEmail}`);
-        await this.ensureLoggedInGoogle(browser, loginEmail, loginPassword);
+        await this.ensureLoggedInGoogle(browser, loginEmail, loginPassword, backupEmail);
         console.log('✅ Авторизация в Google успешно выполнена');
       }
 
       // Заполняем форму
       const result = await withTimeout(this.fillFormForAccount(browser, formConfig, account, options, accountIndex, jobId));
+      
+      // Проверяем, что результат не undefined
+      if (!result) {
+        console.error(`❌ Метод fillFormForAccount вернул undefined для аккаунта ${account.id}`);
+        return {
+          success: false,
+          error: 'Метод fillFormForAccount вернул undefined',
+          submittedAt: new Date().toISOString()
+        };
+      }
       
       // Если форма уже была заполнена, браузер уже закрыт в fillFormForAccount
       if (result.skipped) {
@@ -716,7 +743,13 @@ class FormAutomator {
       
     } catch (error) {
       console.error(`❌ Ошибка в fillFormForAccountWithProfile для аккаунта ${account.id}:`, error);
-      throw error; // Не пробуем без прокси, если прокси нужен
+      
+      // Возвращаем объект ошибки вместо проброса исключения
+      return {
+        success: false,
+        error: error.message,
+        submittedAt: new Date().toISOString()
+      };
     } finally {
       // Очищаем таймаут операции
       if (timeoutHandle) clearTimeout(timeoutHandle);
@@ -784,7 +817,7 @@ class FormAutomator {
     }
   }
 
-  async ensureLoggedInGoogle(browser, email, password) {
+  async ensureLoggedInGoogle(browser, email, password, backupEmail = null) {
     const page = await browser.newPage();
     try {
       // Устанавливаем таймауты для страницы
@@ -911,6 +944,20 @@ class FormAutomator {
       // Проверяем наличие кнопки подтверждения #confirm сразу после ввода пароля
       await this.handleConfirmButton(page);
 
+      // Даем странице стабилизироваться и ждем явного появления challenge перед попыткой клика
+      await page.waitForTimeout(1500);
+      const challengeAppeared = await this.waitForChallenge(page, 20000).catch(() => false);
+      if (challengeAppeared) {
+        console.log('🔒 Обнаружен экран верификации. Переходим к обработке...');
+        try {
+          await this.handleVerificationChallenges(page, backupEmail);
+        } catch (verifErr) {
+          console.log(`ℹ️ Не удалось обработать верификацию через резервную почту: ${verifErr.message}`);
+        }
+      } else {
+        console.log('ℹ️ Экран верификации не обнаружен сразу после ввода пароля');
+      }
+
       // Проверяем успешный вход
       console.log(`🔍 Проверяем успешность входа...`);
       const finalUrl = page.url();
@@ -943,12 +990,42 @@ class FormAutomator {
       });
 
       if (!isLoggedIn) {
-        // Проверяем, не требуется ли 2FA
-        const need2fa = await page.$('div[id*="challenge"], div[data-challengetype], input[name="idvAnyPhonePin"], div[aria-label*="2-Step Verification"]');
-        if (need2fa) {
-          throw new Error('Требуется двухэтапная проверка (2FA) для входа в Google. Автоматизация 2FA не поддерживается.');
+        // Проверяем, не требуется ли доп. подтверждение личности (challenge)
+        let needChallenge = await page.$('div[id*="challenge"], div[data-challengetype], input[name="idvAnyPhonePin"], div[aria-label*="2-Step Verification"], form[action*="challenge"]');
+        if (needChallenge && backupEmail) {
+          console.log('🔐 Обнаружен challenge после входа. Пытаемся пройти через резервный email...');
+          try {
+            await this.handleVerificationChallenges(page, backupEmail);
+            // Переоцениваем успешность входа после попытки
+            await page.waitForTimeout(1500);
+            const stillOnChallenge = await page.$('div[id*="challenge"], div[data-challengetype], form[action*="challenge"]');
+            if (!stillOnChallenge) {
+              // повторная оценка успешности
+              const recheckLoggedIn = await page.evaluate(() => {
+                const indicators = [
+                  'a[href*="SignOutOptions"]',
+                  'a[href*="Logout"]', 
+                  'img[alt*="Google Account"]',
+                  'a[aria-label*="Google Account"]',
+                  'div[aria-label*="Google Account"]',
+                  'button[aria-label*="Google Account"]'
+                ];
+                for (const selector of indicators) {
+                  if (document.querySelector(selector)) return true;
+                }
+                return window.location.href.includes('myaccount.google.com') || 
+                       window.location.href.includes('accounts.google.com/b/0/ManageAccount');
+              });
+              if (recheckLoggedIn) {
+                console.log('✅ Успешно прошли challenge через резервный email');
+                return;
+              }
+            }
+          } catch (challengeErr) {
+            console.log(`⚠️ Не удалось пройти challenge через резервный email: ${challengeErr.message}`);
+          }
         }
-        
+
         // Проверяем другие возможные проблемы
         const errorMessage = await page.evaluate(() => {
           const errorSelectors = [
@@ -971,6 +1048,15 @@ class FormAutomator {
           throw new Error(`Ошибка входа в Google: ${errorMessage}`);
         }
         
+        // Если остался challenge и резервной почты нет или не сработало — сообщаем понятнее
+        needChallenge = await page.$('div[id*="challenge"], div[data-challengetype], input[name="idvAnyPhonePin"], div[aria-label*="2-Step Verification"]');
+        if (needChallenge) {
+          if (backupEmail) {
+            throw new Error('Не удалось пройти дополнительную проверку личности через резервный email.');
+          }
+          throw new Error('Требуется дополнительная проверка личности (2FA/Challenge). Укажите резервную почту в аккаунте.');
+        }
+
         throw new Error('Не удалось подтвердить вход в Google. Проверьте данные аккаунта.');
       }
 
@@ -1155,7 +1241,7 @@ class FormAutomator {
       
       return {
         success: true,
-        submittedAt: new Date()
+        submittedAt: new Date().toISOString()
       };
       
     } finally {
@@ -1226,126 +1312,48 @@ class FormAutomator {
       // Используем более точный подход для поиска поля
       let filled = false;
       
-      // НОВАЯ ЛОГИКА: Ищем поле по его уникальным характеристикам
-      const allInputs = await page.$$('input[type="text"], textarea');
-      console.log(`🔍 Найдено ${allInputs.length} текстовых полей на странице`);
+      // ПРОСТАЯ ЛОГИКА: Заполняем поля строго по порядку
+      const textFieldsInConfig = formConfig.fields.filter(f => f.type === 'text' || f.type === 'textarea' || f.type === 'email');
+      const currentFieldIndex = textFieldsInConfig.indexOf(field);
       
-      for (let i = 0; i < allInputs.length; i++) {
-        const input = allInputs[i];
-        
+      console.log(`📊 Текстовых полей в конфигурации: ${textFieldsInConfig.length}`);
+      console.log(`📊 Индекс текущего поля в текстовых полях: ${currentFieldIndex}`);
+      
+      // Сначала пробуем найти поле по индексу (самый надежный способ)
+      if (currentFieldIndex >= 0) {
         try {
-          // Получаем информацию о поле
-          const inputInfo = await page.evaluate(el => {
-            const rect = el.getBoundingClientRect();
+          const googleFormsInputs = await page.$$('input[type="text"], textarea, input[type="email"]');
+          console.log(`🔍 Найдено ${googleFormsInputs.length} текстовых полей на странице`);
+          
+          if (googleFormsInputs.length > currentFieldIndex) {
+            const targetInput = googleFormsInputs[currentFieldIndex];
             
-            // Ищем родительский контейнер с вопросом
-            let parent = el.closest('[role="group"], .freebirdFormviewerViewItemsItemItem, [data-item-id]') || 
-                        el.closest('div').parentElement;
+            // Проверяем, что поле видимо и не заполнено
+            const isVisible = await page.evaluate(el => {
+              const rect = el.getBoundingClientRect();
+              return rect.width > 0 && rect.height > 0 && el.offsetParent !== null;
+            }, targetInput);
             
-            let parentText = '';
-            let questionText = '';
+            const isEmpty = await page.evaluate(el => !el.value || el.value.trim() === '', targetInput);
             
-            if (parent) {
-              parentText = parent.textContent.trim();
-              
-              // Расширенный поиск текста вопроса
-              const titleSelectors = [
-                'h2', 'h3', '[role="heading"]', 
-                '.freebirdFormviewerViewItemsItemItemTitle', 
-                '.freebirdFormviewerViewItemsItemItemTitleText', 
-                'span[dir="auto"]',
-                '.aDTYNe', '.snByac', '.OvPDhc', '.OIC90c',
-                'div[role="heading"]',
-                'span:not([class*="answer"]):not([class*="Your"])'
-              ];
-              
-              for (const selector of titleSelectors) {
-                const titleEl = parent.querySelector(selector);
-                if (titleEl && titleEl.textContent.trim()) {
-                  const text = titleEl.textContent.trim();
-                  // Исключаем технические тексты
-                  if (!text.includes('Your answer') && 
-                      !text.includes('Required') && 
-                      !text.includes('Optional') &&
-                      text.length > 2 && text.length < 200) {
-                    questionText = text;
-                    break;
-                  }
-                }
-              }
-              
-              // Если не нашли в заголовках, ищем в родительском элементе
-              if (!questionText) {
-                const allTextElements = parent.querySelectorAll('span, div, p, label');
-                for (const textEl of allTextElements) {
-                  const text = textEl.textContent.trim();
-                  if (text && text.length > 2 && text.length < 200 &&
-                      !text.includes('Your answer') &&
-                      !text.includes('Required') &&
-                      !text.includes('Optional') &&
-                      !text.includes('Submit') &&
-                      !text.includes('Clear form') &&
-                      !text.includes('Record my email') &&
-                      textEl.offsetParent !== null) {
-                    questionText = text;
-                    break;
-                  }
-                }
-              }
+            if (isVisible && isEmpty) {
+              await targetInput.click();
+              await page.waitForTimeout(100); // Небольшая пауза
+              await targetInput.type(value, { delay: 50 });
+              console.log(`✅ Успешно заполнено поле ${field.title} по индексу ${currentFieldIndex}`);
+              filled = true;
+            } else {
+              console.log(`⚠️ Поле ${currentFieldIndex} не видимо или уже заполнено`);
             }
-            
-            return {
-              name: el.name,
-              placeholder: el.placeholder,
-              ariaLabel: el.getAttribute('aria-label'),
-              parentText: parentText,
-              questionText: questionText,
-              visible: rect.width > 0 && rect.height > 0,
-              className: el.className
-            };
-          }, input);
-          
-          console.log(`🔍 Поле ${i}: parentText="${inputInfo.parentText.substring(0, 50)}..."`);
-          console.log(`🔍 Поле ${i}: questionText="${inputInfo.questionText}"`);
-          
-          // Проверяем, подходит ли это поле по названию
-          const fieldTitleLower = field.title.toLowerCase();
-          const parentTextLower = inputInfo.parentText.toLowerCase();
-          const questionTextLower = inputInfo.questionText.toLowerCase();
-          
-          // Более точное сопоставление названий
-          const isMatch = questionTextLower.includes(fieldTitleLower) || 
-                         fieldTitleLower.includes(questionTextLower) ||
-                         parentTextLower.includes(fieldTitleLower) || 
-                         fieldTitleLower.includes(parentTextLower.substring(0, 30));
-          
-          // Дополнительная проверка для корейских текстов
-          const koreanMatch = fieldTitleLower.includes('코백남') && questionTextLower.includes('코백남') ||
-                             fieldTitleLower.includes('트윗') && questionTextLower.includes('트윗') ||
-                             fieldTitleLower.includes('지갑') && questionTextLower.includes('지갑');
-          
-          if (isMatch || koreanMatch) {
-            await input.click();
-            await input.type(value);
-            console.log(`✅ Успешно заполнено поле ${field.title} по названию (индекс ${i})`);
-            console.log(`   Совпадение: questionText="${inputInfo.questionText}"`);
-            filled = true;
-            break;
           }
-          
         } catch (error) {
-          console.log(`❌ Ошибка при проверке поля ${i}: ${error.message}`);
-          continue;
+          console.log(`❌ Ошибка при заполнении по индексу: ${error.message}`);
         }
       }
       
-      // Если не получилось по названию, пробуем другие селекторы
+      // Если не получилось по индексу, пробуем резервные селекторы
       if (!filled) {
-        console.log(`⚠️ Поиск по названию не сработал для поля ${field.title}, используем резервную логику`);
-        
-        // Получаем индекс поля в конфигурации
-        const fieldIndex = formConfig.fields.indexOf(field);
-        console.log(`📊 Индекс поля ${field.title} в конфигурации: ${fieldIndex}`);
+        console.log(`⚠️ Поиск по индексу не сработал, пробуем резервные селекторы для поля ${field.title}`);
         
         const selectors = [
           selector, // Оригинальный селектор
@@ -1357,42 +1365,21 @@ class FormAutomator {
           try {
             const elements = await page.$$(sel);
             if (elements.length > 0) {
-              await elements[0].click();
-              await elements[0].type(value);
-              console.log(`✅ Успешно заполнено поле ${field.title} селектором: ${sel}`);
-              filled = true;
-              break;
+              const element = elements[0];
+              const isEmpty = await page.evaluate(el => !el.value || el.value.trim() === '', element);
+              
+              if (isEmpty) {
+                await element.click();
+                await page.waitForTimeout(100);
+                await element.type(value, { delay: 50 });
+                console.log(`✅ Успешно заполнено поле ${field.title} селектором: ${sel}`);
+                filled = true;
+                break;
+              }
             }
           } catch (error) {
             console.log(`❌ Селектор ${sel} не сработал: ${error.message}`);
             continue;
-          }
-        }
-        
-        // Если все еще не заполнено, используем индекс для Google Forms полей
-        if (!filled) {
-          try {
-            const googleFormsInputs = await page.$$('.whsOnd.zHQkBf');
-            console.log(`🔍 Найдено ${googleFormsInputs.length} полей Google Forms`);
-            
-            // ИСПРАВЛЕНИЕ: Вычисляем правильный индекс для текстовых полей
-            // Исключаем радиокнопки из подсчета индекса
-            const textFieldsInConfig = formConfig.fields.filter(f => f.type === 'text' || f.type === 'textarea');
-            const currentFieldIndex = textFieldsInConfig.indexOf(field);
-            
-            console.log(`📊 Текстовых полей в конфигурации: ${textFieldsInConfig.length}`);
-            console.log(`📊 Индекс текущего поля в текстовых полях: ${currentFieldIndex}`);
-            
-            if (googleFormsInputs.length > currentFieldIndex && currentFieldIndex >= 0) {
-              await googleFormsInputs[currentFieldIndex].click();
-              await googleFormsInputs[currentFieldIndex].type(value);
-              console.log(`✅ Успешно заполнено поле ${field.title} по индексу ${currentFieldIndex} (Google Forms)`);
-              filled = true;
-            } else {
-              console.log(`❌ Не удалось заполнить поле ${field.title} - индекс ${currentFieldIndex} вне диапазона`);
-            }
-          } catch (error) {
-            console.log(`❌ Ошибка при заполнении по индексу: ${error.message}`);
           }
         }
       }
@@ -1880,22 +1867,30 @@ class FormAutomator {
   }
 
   getValueForField(field, account) {
+    console.log(`🔍 Получаем значение для поля: ${field.title} (ID: ${field.id}, Name: ${field.name})`);
+    console.log(`📊 Данные аккаунта:`, account.data);
+    console.log(`📊 Поля аккаунта:`, account.fields);
+    
     // Сначала проверяем пользовательские данные (если есть)
     if (account.fields && account.fields[field.id] !== undefined) {
+      console.log(`✅ Найдено значение в account.fields[${field.id}]:`, account.fields[field.id]);
       return account.fields[field.id];
     }
     
     // Ищем значение в данных аккаунта по имени поля
     let value = account.data && account.data[field.name];
+    console.log(`🔍 Поиск по field.name (${field.name}):`, value);
     
     // Если значение не найдено, пробуем найти по ID
     if (value === undefined) {
       value = account.data && account.data[field.id];
+      console.log(`🔍 Поиск по field.id (${field.id}):`, value);
     }
     
     // Если все еще не найдено, используем значение по умолчанию
     if (value === undefined && field.defaultValue) {
       value = field.defaultValue;
+      console.log(`🔍 Используем defaultValue:`, value);
     }
     
     console.log(`📋 Итоговое значение для поля ${field.title} (${field.id}):`, value, typeof value);
@@ -2514,7 +2509,56 @@ class FormAutomator {
     await this.profileManager.closeAllBrowsers();
   }
 
-  // Универсальный метод для обработки кнопки подтверждения #confirm
+  // Универсальный метод для поиска и нажатия кнопки по тексту и классу
+  async findAndClickButtonByText(page, possibleTexts, className = 'VfPpkd-vQzf8d', timeout = 5000) {
+    try {
+      console.log(`🔍 Ищем кнопку с текстом: ${possibleTexts.join(', ')}`);
+      
+      // Ждем немного для загрузки страницы
+      await page.waitForTimeout(1000);
+      
+      // Ищем кнопку по тексту и классу
+      const button = await page.evaluateHandle((texts, className) => {
+        const elements = document.querySelectorAll(`span.${className}`);
+        for (const element of elements) {
+          const text = element.textContent.trim();
+          if (texts.some(possibleText => text.includes(possibleText))) {
+            return element;
+          }
+        }
+        return null;
+      }, possibleTexts, className);
+      
+      if (button && await button.asElement()) {
+        const buttonText = await page.evaluate(el => el.textContent.trim(), button);
+        console.log(`✅ Найдена кнопка: "${buttonText}"`);
+        
+        // Проверяем, что кнопка видима и кликабельна
+        const isVisible = await page.evaluate(el => {
+          const rect = el.getBoundingClientRect();
+          return rect.width > 0 && rect.height > 0 && el.offsetParent !== null;
+        }, button);
+        
+        if (isVisible) {
+          await button.asElement().click();
+          await page.waitForTimeout(2000);
+          console.log(`✅ Кнопка "${buttonText}" нажата`);
+          return true;
+        } else {
+          console.log(`ℹ️ Кнопка "${buttonText}" найдена, но не видима`);
+          return false;
+        }
+      } else {
+        console.log(`ℹ️ Кнопка с текстом ${possibleTexts.join(', ')} не найдена`);
+        return false;
+      }
+    } catch (error) {
+      console.log(`ℹ️ Кнопка не найдена или недоступна: ${error.message}`);
+      return false;
+    }
+  }
+
+  // Универсальный метод для обработки кнопки подтверждения #confirm и дополнительных шагов
   async handleConfirmButton(page) {
     try {
       console.log(`🔍 Проверяем наличие кнопки подтверждения #confirm...`);
@@ -2541,9 +2585,263 @@ class FormAutomator {
       } else {
         console.log(`ℹ️ Кнопка подтверждения #confirm не найдена`);
       }
+
+      // Дополнительные шаги после ввода пароля (могут встречаться не всегда)
+      console.log(`🔄 Проверяем дополнительные шаги авторизации (могут отсутствовать)...`);
+      
+      // Шаг 1: "Не сейчас" / "Not now" / "Later" (опционально)
+      try {
+        const notNowClicked = await this.findAndClickButtonByText(page, [
+          'Не сейчас', 'Not now', 'Later', 'Позже', 'Не зараз', 'Not right now'
+        ]);
+        
+        if (notNowClicked) {
+          console.log(`✅ Шаг "Не сейчас" выполнен`);
+          await page.waitForTimeout(2000);
+          
+          // Шаг 2: "Сохранить" / "Save" / "Сохранить пароль" (опционально)
+          try {
+            const saveClicked = await this.findAndClickButtonByText(page, [
+              'Сохранить', 'Save', 'Сохранить пароль', 'Save password', 'Зберегти'
+            ]);
+            
+            if (saveClicked) {
+              console.log(`✅ Шаг "Сохранить" выполнен`);
+              await page.waitForTimeout(2000);
+              
+              // Шаг 3: "Пропустить" / "Skip" / "Пропустить настройки" (опционально)
+              try {
+                const skipClicked = await this.findAndClickButtonByText(page, [
+                  'Пропустить', 'Skip', 'Пропустить настройки', 'Skip setup', 'Пропустити', 'Skip settings'
+                ]);
+                
+                if (skipClicked) {
+                  console.log(`✅ Шаг "Пропустить" выполнен`);
+                } else {
+                  console.log(`ℹ️ Шаг "Пропустить" не найден - это нормально`);
+                }
+              } catch (skipError) {
+                console.log(`ℹ️ Шаг "Пропустить" пропущен: ${skipError.message}`);
+              }
+            } else {
+              console.log(`ℹ️ Шаг "Сохранить" не найден - это нормально`);
+            }
+          } catch (saveError) {
+            console.log(`ℹ️ Шаг "Сохранить" пропущен: ${saveError.message}`);
+          }
+        } else {
+          console.log(`ℹ️ Шаг "Не сейчас" не найден - это нормально`);
+        }
+      } catch (notNowError) {
+        console.log(`ℹ️ Дополнительные шаги авторизации пропущены: ${notNowError.message}`);
+      }
+      
+      console.log(`✅ Процесс авторизации завершен (дополнительные шаги обработаны)`);
+      
     } catch (confirmError) {
       console.log(`⚠️ Ошибка при обработке кнопки подтверждения: ${confirmError.message}`);
     }
+  }
+
+  // Обработка челенджа верификации личности через резервную почту
+  async handleVerificationChallenges(page, backupEmail) {
+    // Если резервной почты нет — ничего не делаем
+    if (!backupEmail) {
+      throw new Error('Резервная почта не задана');
+    }
+
+    console.log('🔒 Проверяем необходимость дополнительной верификации...');
+    // Ищем блоки challenge
+    // Явно ждём появления одного из индикаторов challenge
+    const challengeRoot = await this.waitForChallenge(page, 20000);
+    if (!challengeRoot) {
+      throw new Error('Челендж не обнаружен');
+    }
+
+    // Попробуем выбрать опцию проверки по резервному email
+    // 1) Явно ищем нужные карточки/варианты: div.VV3oRb[data-action="selectchallenge"][data-challengetype] с дочерним .l5PPKe
+    //    и div.l5PPKe[jsname="fmcmS"] во всех фреймах
+    let methodChosen = false;
+    try {
+      const candidateSelectors = [
+        'div.VV3oRb[data-action="selectchallenge"][data-challengetype] .l5PPKe',
+        'div.VV3oRb[data-action="selectchallenge"][data-challengetype]',
+        'div.l5PPKe[jsname="fmcmS"]',
+        'div.l5PPKe'
+      ];
+      const keywordSubstrings = [
+        // RU
+        'резерв', 'восстанов', 'запасн', 'альтернатив', 'резервн',
+        // EN
+        'recovery', 'backup', 'alternate', 'alternative',
+        // ES
+        'respaldo', 'recuperación', 'correo de respaldo',
+        // PT/BR
+        'recupera', 'alternativo',
+        // IT/DE/FR
+        'di backup', 'sicherungs', 'sauvegarde', 'récupération',
+        // Generic email tokens
+        'email', 'e-mail', 'почт'
+      ];
+      const frames = page.frames();
+      for (const frame of frames) {
+        for (const sel of candidateSelectors) {
+          const elements = await frame.$$(sel);
+          for (const el of elements) {
+            const text = (await frame.evaluate(e => e.textContent || '', el)).trim().toLowerCase();
+            const match = keywordSubstrings.some(k => text.includes(k));
+            if (match) {
+              const visible = await frame.evaluate(e => {
+                const r = e.getBoundingClientRect();
+                return r.width > 0 && r.height > 0 && getComputedStyle(e).visibility !== 'hidden';
+              }, el).catch(() => false);
+              if (visible) {
+                // Скроллим в видимую область и кликаем через JS на всякий случай
+                await frame.evaluate(e => { e.scrollIntoView({behavior:'auto', block:'center'}); }, el);
+                await frame.evaluate(e => { if (e && typeof e.click === 'function') e.click(); }, el).catch(async () => {
+                  try { await (await el.asElement()).click(); } catch {}
+                });
+                methodChosen = true;
+                console.log(`✅ Выбран метод верификации по карточке: "${text}"`);
+                await page.waitForTimeout(1000);
+                break;
+              }
+            }
+          }
+          if (methodChosen) break;
+        }
+        if (methodChosen) break;
+      }
+
+      // XPath-фоллбек по подстрокам текста
+      if (!methodChosen) {
+        const xPaths = [
+          "//div[contains(@class,'VV3oRb') and @data-action='selectchallenge']//div[contains(@class,'l5PPKe')]",
+          "//div[contains(@class,'l5PPKe') and contains(translate(., 'ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'abcdefghijklmnopqrstuvwxyz'), 'резерв')]",
+          "//div[contains(@class,'l5PPKe') and contains(translate(., 'ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'abcdefghijklmnopqrstuvwxyz'), 'backup')]",
+          "//div[contains(@class,'l5PPKe') and contains(translate(., 'ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'abcdefghijklmnopqrstuvwxyz'), 'recovery')]"
+        ];
+        for (const frame of frames) {
+          for (const xp of xPaths) {
+            const handles = await frame.$x(xp);
+            if (handles && handles.length > 0) {
+              const el = handles[0];
+              try {
+                await frame.evaluate(e => { e.scrollIntoView({behavior:'auto', block:'center'}); }, el);
+                await frame.evaluate(e => { if (e && typeof e.click === 'function') e.click(); }, el);
+                methodChosen = true;
+                console.log('✅ Выбран метод верификации по XPath');
+                await page.waitForTimeout(1000);
+                break;
+              } catch {}
+            }
+          }
+          if (methodChosen) break;
+        }
+      }
+    } catch {}
+
+    // 2) Если карточка не найдена, пробуем клик по кнопкам/ссылкам с текстами
+    if (!methodChosen) {
+      try {
+        const clickedMethod = await this.findAndClickButtonByText(page, [
+          // RU
+          'Подтвердите резервный адрес электронной почты', 'Подтвердить через резервную почту', 'Подтвердить по резервному email',
+          // EN
+          'Confirm your recovery email', 'Verify with backup email', 'Use your backup email', 'Use backup email', 'Confirm recovery email',
+          // ES/IT/DE/FR variations (приблизительные)
+          'Confirmar correo de respaldo', 'Correo de respaldo', 'E-mail di backup', 'E-mail alternativo', 'Sicherungs-E-Mail', 'E-mail de récupération'
+        ], 'div.l5PPKe[jsname="fmcmS"], button, div[role="button"], .VfPpkd-LgbsSe, a');
+        if (clickedMethod) {
+          methodChosen = true;
+          console.log('✅ Выбран метод верификации по резервной почте (через кнопки)');
+          await page.waitForTimeout(1000);
+        }
+      } catch {}
+    }
+
+    // Иногда это радио-инпуты/чипы
+    const possibleEmailMethodSelectors = [
+      'input[type="radio"][value*="email"]',
+      '[data-challengetype*="email"]',
+      'div[role="radio"][data-value*="email"]',
+      'div[role="button"][data-email-option]'
+    ];
+    for (const sel of possibleEmailMethodSelectors) {
+      const el = await page.$(sel);
+      if (el) {
+        try { await el.click(); await page.waitForTimeout(800); } catch {}
+      }
+    }
+
+    // Поле ввода резервной почты — ищем разные варианты
+    const emailInputSelectors = [
+      'input[type="email"]',
+      'input[name*="email"]',
+      'input[autocomplete="email"]',
+      'input[aria-label*="email" i]',
+      'input[aria-label*="почт" i]',
+      'input', // на крайний случай
+    ];
+    let inputFound = null;
+    for (const sel of emailInputSelectors) {
+      const el = await page.$(sel);
+      if (el) {
+        const type = await page.evaluate(e => e.getAttribute('type') || '', el);
+        const name = await page.evaluate(e => e.getAttribute('name') || '', el);
+        const aria = await page.evaluate(e => e.getAttribute('aria-label') || '', el);
+        if ((type.toLowerCase() === 'email') || /email|почт/i.test(name + ' ' + aria)) {
+          inputFound = el;
+          break;
+        }
+      }
+    }
+
+    if (!inputFound) {
+      // иногда это поле типа text, попробуем дождаться видимого поля ввода
+      try {
+        await page.waitForSelector('input[type="email"], input[name*="email"], input[autocomplete="email"], input[type="text"]', { visible: true, timeout: 10000 });
+        inputFound = await page.$('input[type="email"], input[name*="email"], input[autocomplete="email"], input[type="text"]');
+      } catch {}
+    }
+
+    if (!inputFound) {
+      throw new Error('Поле ввода резервной почты не найдено');
+    }
+
+    // Вводим резервную почту
+    await inputFound.click({ clickCount: 3 });
+    await page.type('input:focus', String(backupEmail), { delay: 80 });
+
+    // Ищем кнопку Далее/Подтвердить
+    const nextTexts = ['Далее', 'Next', 'Continue', 'Продолжить', 'Confirm', 'Подтвердить', 'Submit'];
+    const clickedNext = await this.findAndClickButtonByText(page, nextTexts);
+    if (!clickedNext) {
+      // Пробуем стандартный селектор
+      const nextBtn = await page.$('#next, #submit, button[type="submit"], #passwordNext, #idvPreregisteredEmailNext');
+      if (nextBtn) {
+        await nextBtn.click();
+      } else {
+        // Попробуем нажать Enter на поле
+        try { await page.keyboard.press('Enter'); } catch {}
+        await page.waitForTimeout(800);
+        const stillHere = await page.$('input[type="email"], input[name*="email"], input[autocomplete="email"]').catch(() => null);
+        if (stillHere) {
+          throw new Error('Кнопка продолжения после ввода резервной почты не найдена');
+        }
+      }
+    }
+
+    // Ждем возможной навигации/перехода шага
+    await Promise.race([
+      page.waitForNavigation({ waitUntil: 'networkidle2', timeout: 15000 }).catch(() => {}),
+      page.waitForTimeout(1500)
+    ]);
+
+    // Возможен дополнительный подтверждающий шаг — снова попробуем нажать подтверждение
+    await this.handleConfirmButton(page);
+
+    console.log('✅ Попытка прохождения верификации через резервную почту завершена');
   }
 }
 
