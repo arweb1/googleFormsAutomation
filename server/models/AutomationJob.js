@@ -14,9 +14,20 @@ class AutomationJob {
 
   async getAll() {
     try {
-      if (await fs.pathExists(this.jobsFile)) {
-        const data = await fs.readFile(this.jobsFile, 'utf8');
-        return JSON.parse(data);
+      if (!(await fs.pathExists(this.jobsFile))) return [];
+
+      // Добавляем ретраи чтения на случай параллельной записи
+      const maxAttempts = 5;
+      for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+        try {
+          const data = await fs.readFile(this.jobsFile, 'utf8');
+          if (!data || data.trim() === '') return [];
+          return JSON.parse(data);
+        } catch (e) {
+          if (attempt === maxAttempts) throw e;
+          await new Promise(r => setTimeout(r, 50 * attempt));
+          continue;
+        }
       }
       return [];
     } catch (error) {
@@ -28,7 +39,10 @@ class AutomationJob {
   async save(jobs) {
     try {
       await fs.ensureDir(path.dirname(this.jobsFile));
-      await fs.writeFile(this.jobsFile, JSON.stringify(jobs, null, 2));
+      // Атомарная запись: пишем во временный файл и переименовываем
+      const tmpFile = this.jobsFile + '.tmp';
+      await fs.writeFile(tmpFile, JSON.stringify(jobs, null, 2));
+      await fs.move(tmpFile, this.jobsFile, { overwrite: true });
     } catch (error) {
       console.error('Ошибка сохранения задач:', error);
       throw error;

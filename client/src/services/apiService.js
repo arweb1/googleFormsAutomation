@@ -48,6 +48,7 @@ export const apiService = {
     upload: (accounts) => api.post('/accounts/upload', { accounts }),
     update: (id, data) => api.put(`/accounts/${id}`, data),
     delete: (id) => api.delete(`/accounts/${id}`),
+    deleteAll: () => api.delete('/accounts/all'),
   },
 
   // Proxies API

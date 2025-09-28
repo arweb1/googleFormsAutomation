@@ -117,6 +117,16 @@ class AccountManager {
     await this.saveAccounts(filteredAccounts);
   }
 
+  async deleteAllAccounts() {
+    try {
+      await this.saveAccounts([]);
+      return true;
+    } catch (error) {
+      console.error('Ошибка удаления всех аккаунтов:', error);
+      throw error;
+    }
+  }
+
   async exportAccounts(format = 'csv') {
     const accounts = await this.loadAccounts();
     

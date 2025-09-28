@@ -14,11 +14,13 @@ class FormAutomator {
     this.jobModel = new AutomationJob();
     this.profileManager = new BrowserProfileManager();
     this.usedProxies = new Map(); // Отслеживание использованных прокси для каждой задачи
-    this.maxConcurrentBrowsers = 1; // Полностью последовательная обработка
-    this.activeBrowsers = new Set(); // Отслеживание активных браузеров
+    this.maxConcurrentBrowsers = 1; // Устаревший глобальный лимит (не используется для нескольких задач)
+    this.activeBrowsers = new Set(); // Глобальный трекинг (сохраняем для совместимости логов)
     this.batchSize = 1; // Пакет из одного аккаунта
     this.batchDelay = 0; // Без задержки между пакетами
     this.cancellationTokens = new Map(); // jobId -> { cancelled: boolean }
+    this.jobBrowsers = new Map(); // jobId -> Set(accountId)
+    this.jobConcurrency = new Map(); // jobId -> number
   }
 
   async initBrowser(options = {}) {
@@ -164,8 +166,8 @@ class FormAutomator {
 
       // Настраиваем конкурренси
       const desiredConcurrency = Math.max(1, Math.min(8, Number(options.concurrency) || 1));
-      this.maxConcurrentBrowsers = desiredConcurrency;
-      console.log(`🧵 Конкурентность установлена: ${this.maxConcurrentBrowsers}`);
+      this.jobConcurrency.set(jobId, desiredConcurrency);
+      console.log(`🧵 Конкурентность для задачи ${jobId}: ${desiredConcurrency}`);
 
       // Запускаем автоматизацию в фоне
       console.log(`🚀 Запуск автоматизации в фоновом режиме...`);
@@ -222,12 +224,14 @@ class FormAutomator {
     }
 
     console.log(`✅ Задача найдена: ${job.status}`);
+    const jobConc = this.jobConcurrency.get(jobId) || 1;
 
     try {
       // Если конкурренси больше 1 — запускаем пул воркеров с джиттером
-      if (this.maxConcurrentBrowsers > 1) {
-        console.log(`🧵 Запуск пула воркеров: ${this.maxConcurrentBrowsers}`);
-        await this.runAutomationWithConcurrency(jobId, formConfig, accounts, options, this.maxConcurrentBrowsers);
+      const jobConc = this.jobConcurrency.get(jobId) || 1;
+      if (jobConc > 1) {
+        console.log(`🧵 Запуск пула воркеров: ${jobConc}`);
+        await this.runAutomationWithConcurrency(jobId, formConfig, accounts, options, jobConc);
         // После пула — те же завершающие действия
         const tokenEnd = this.cancellationTokens.get(jobId);
         const finalStatus = tokenEnd && tokenEnd.cancelled ? 'stopped' : 'completed';
@@ -237,7 +241,7 @@ class FormAutomator {
           message: finalStatus === 'stopped' ? `Задача остановлена пользователем` : `Автоматизация завершена. Обработано: ${job.completedAccounts}, Ошибок: ${job.failedAccounts}`
         });
         this.usedProxies.delete(jobId);
-        await this.profileManager.closeAllBrowsers();
+        await this.closeJobBrowsers(jobId);
         return;
       }
       // Добавляем лог о начале обработки
@@ -272,8 +276,8 @@ class FormAutomator {
         console.log(`\n📦 === ПАКЕТ ${batchIndex + 1}/${totalBatches} ===`);
         console.log(`📊 Обрабатываем аккаунты ${startIndex + 1}-${endIndex} из ${accounts.length}`);
         console.log(`👥 Аккаунтов в пакете: ${batch.length}`);
-        console.log(`🌐 Активных браузеров перед пакетом: ${this.activeBrowsers.size}/${this.maxConcurrentBrowsers}`);
-        console.log(`📋 Активные браузеры:`, Array.from(this.activeBrowsers));
+        const jobActiveBefore = (this.jobBrowsers.get(jobId)?.size || 0);
+        console.log(`🌐 Активных браузеров задачи перед пакетом: ${jobActiveBefore}/${jobConc}`);
         
         // Добавляем лог о начале пакета
         await this.jobModel.addLog(jobId, {
@@ -301,25 +305,12 @@ class FormAutomator {
           console.log(`\n🚀 Начинаем обработку аккаунта ${globalIndex + 1}/${accounts.length}: ${account.email}`);
           console.log(`📊 Всего аккаунтов для обработки: ${accounts.length}`);
           
-          // Синхронизируем отслеживание браузеров с профиль менеджером
-          const profileManagerBrowsers = Array.from(this.profileManager.activeBrowsers.keys());
-          const formAutomatorBrowsers = Array.from(this.activeBrowsers);
-          
-          console.log(`🔧 Браузеры в профиль менеджере:`, profileManagerBrowsers);
-          console.log(`📋 Браузеры в FormAutomator:`, formAutomatorBrowsers);
-          
-          // Синхронизируем отслеживание
-          this.activeBrowsers.clear();
-          profileManagerBrowsers.forEach(browserId => this.activeBrowsers.add(browserId));
-          console.log(`🔄 Синхронизировано отслеживание браузеров`);
-          
-          // Проверяем количество активных браузеров
-          const activeBrowserCount = this.activeBrowsers.size;
-          console.log(`🌐 Активных браузеров: ${activeBrowserCount}/${this.maxConcurrentBrowsers}`);
-          console.log(`📋 Активные браузеры после синхронизации:`, Array.from(this.activeBrowsers));
+          // Проверяем количество активных браузеров ТОЛЬКО текущей задачи
+          const activeBrowserCount = (this.jobBrowsers.get(jobId)?.size || 0);
+          console.log(`🌐 Активных браузеров задачи: ${activeBrowserCount}/${jobConc}`);
           
           // Проверяем, не обрабатывается ли уже этот аккаунт
-          if (this.activeBrowsers.has(account.id)) {
+          if ((this.jobBrowsers.get(jobId)?.has(account.id)) === true) {
             console.log(`⚠️ Аккаунт ${account.id} уже обрабатывается! Пропускаем...`);
             await this.jobModel.addLog(jobId, {
               type: 'warning',
@@ -329,50 +320,36 @@ class FormAutomator {
             continue; // Переходим к следующему аккаунту
           }
           
-          if (activeBrowserCount >= this.maxConcurrentBrowsers) {
+          if (activeBrowserCount >= jobConc) {
             console.log(`⏳ Достигнуто максимальное количество браузеров. Ждем освобождения...`);
             await this.jobModel.addLog(jobId, {
               type: 'info',
-              message: `Достигнуто максимальное количество браузеров (${this.maxConcurrentBrowsers}). Ждем освобождения...`,
+              message: `Достигнуто максимальное количество браузеров (${jobConc}). Ждем освобождения...`,
               accountId: account.id
             });
             
-            // Ждем освобождения браузеров с таймаутом
+            // Ждем освобождения браузеров без глобальной зачистки, с увеличивающимся интервалом
             let waitTime = 0;
-            const maxWaitTime = 10000; // 10 секунд максимум (уменьшено)
+            const maxWaitTime = 60000; // до 60 секунд
+            let interval = 500; // стартовый интервал
             console.log(`⏳ Начинаем ожидание освобождения браузеров...`);
-            console.log(`📋 Активные браузеры:`, Array.from(this.activeBrowsers));
+            console.log(`📋 Активные браузеры задачи:`, Array.from(this.jobBrowsers.get(jobId) || []));
             
-            while (this.activeBrowsers.size >= this.maxConcurrentBrowsers && waitTime < maxWaitTime) {
+            while ((this.jobBrowsers.get(jobId)?.size || 0) >= jobConc && waitTime < maxWaitTime) {
               const tokenWait = this.cancellationTokens.get(jobId);
               if (tokenWait && tokenWait.cancelled) {
                 console.log(`🛑 Задача ${jobId} отменена во время ожидания слотов браузера`);
                 break;
               }
-              await this.sleep(1000); // Проверяем каждую секунду
-              waitTime += 1000;
-              console.log(`⏳ Ждем освобождения браузеров... (${this.activeBrowsers.size}/${this.maxConcurrentBrowsers}) - ${waitTime}мс`);
-              console.log(`📋 Активные браузеры:`, Array.from(this.activeBrowsers));
-              
-              // Проверяем состояние браузеров в профиль менеджере
-              const profileManagerBrowsers = Array.from(this.profileManager.activeBrowsers.keys());
-              console.log(`🔧 Браузеры в профиль менеджере:`, profileManagerBrowsers);
+              await this.sleep(interval);
+              waitTime += interval;
+              interval = Math.min(interval + 500, 3000); // плавное увеличение интервала
+              const currentJobActive = (this.jobBrowsers.get(jobId)?.size || 0);
+              console.log(`⏳ Ждем освобождения браузеров задачи... (${currentJobActive}/${jobConc}) - ${waitTime}мс`);
             }
             
             if (waitTime >= maxWaitTime) {
-              console.log(`⚠️ Таймаут ожидания браузеров (${maxWaitTime}мс). Принудительно очищаем...`);
-              console.log(`📋 Браузеры перед принудительной очисткой:`, Array.from(this.activeBrowsers));
-              
-              try {
-                await this.profileManager.closeAllBrowsers();
-                console.log(`✅ Все браузеры закрыты через профиль менеджер`);
-              } catch (closeError) {
-                console.error(`❌ Ошибка закрытия браузеров:`, closeError);
-              }
-              
-              this.activeBrowsers.clear();
-              console.log(`🧹 Принудительно очищены все браузеры из отслеживания`);
-              console.log(`🌐 Активных браузеров после очистки: ${this.activeBrowsers.size}/${this.maxConcurrentBrowsers}`);
+              console.log(`⚠️ Таймаут ожидания браузеров (${maxWaitTime}мс). Продолжаем без принудительной очистки.`);
             } else {
               console.log(`✅ Браузеры освободились за ${waitTime}мс`);
             }
@@ -509,15 +486,13 @@ class FormAutomator {
       console.log(`📦 === КОНЕЦ ПАКЕТА ${batchIndex + 1}/${totalBatches} ===`);
       console.log(`📊 Обработано аккаунтов в пакете: ${batch.length}`);
       
-      // Принудительная очистка всех браузеров после завершения пакета
-      console.log(`🧹 Принудительная очистка всех браузеров после пакета...`);
+      // Принудительная очистка браузеров ТОЛЬКО текущей задачи
+      console.log(`🧹 Очистка браузеров текущего пакета задачи ${jobId}...`);
       try {
-        await this.profileManager.closeAllBrowsers();
-        this.activeBrowsers.clear(); // Очищаем отслеживание
-        console.log(`✅ Все браузеры принудительно закрыты после пакета`);
-        console.log(`🌐 Активных браузеров: ${this.activeBrowsers.size}/${this.maxConcurrentBrowsers}`);
+        await this.closeJobBrowsers(jobId);
+        console.log(`✅ Браузеры задачи ${jobId} закрыты после пакета`);
       } catch (cleanupError) {
-        console.error(`❌ Ошибка при принудительной очистке браузеров после пакета:`, cleanupError);
+        console.error(`❌ Ошибка при очистке браузеров задачи ${jobId}:`, cleanupError);
       }
       
       // Задержка между пакетами (кроме последнего)
@@ -566,19 +541,19 @@ class FormAutomator {
         });
       }
       
-      // Закрываем все браузеры после завершения/остановки задачи
-      console.log('🔒 Закрываем все браузеры...');
-      await this.profileManager.closeAllBrowsers();
-      console.log('✅ Все браузеры закрыты');
+      // Закрываем браузеры только текущей задачи
+      console.log(`🔒 Закрываем браузеры задачи ${jobId}...`);
+      await this.closeJobBrowsers(jobId);
+      console.log(`✅ Браузеры задачи ${jobId} закрыты`);
       
     } catch (error) {
       console.error(`Критическая ошибка в задаче ${jobId}:`, error);
       
       // Закрываем все браузеры в случае ошибки
       try {
-        console.log('🔒 Закрываем все браузеры из-за ошибки...');
-        await this.profileManager.closeAllBrowsers();
-        console.log('✅ Все браузеры закрыты');
+        console.log(`🔒 Закрываем браузеры задачи ${jobId} из-за ошибки...`);
+        await this.closeJobBrowsers(jobId);
+        console.log(`✅ Браузеры задачи ${jobId} закрыты`);
       } catch (closeError) {
         console.error('Ошибка при закрытии браузеров:', closeError);
       }
@@ -681,9 +656,28 @@ class FormAutomator {
     await Promise.all(workers);
   }
 
+  // Закрыть все браузеры, запущенные в рамках конкретной задачи
+  async closeJobBrowsers(jobId) {
+    try {
+      const set = this.jobBrowsers.get(jobId);
+      if (!set || set.size === 0) return;
+      const ids = Array.from(set);
+      for (const accountId of ids) {
+        await this.profileManager.closeBrowserForAccount(accountId).catch(() => {});
+      }
+      set.clear();
+    } catch (e) {
+      console.log(`⚠️ Ошибка закрытия браузеров для задачи ${jobId}: ${e.message}`);
+    }
+  }
+
   async fillFormForAccountWithProfile(formConfig, account, options, accountIndex = 0, jobId = null) {
     let browser = null;
     let page = null;
+    // Уникальный ключ профиля: для Google-логина используем реальный ID аккаунта, иначе jobId+локальный id
+    const profileKey = (options.loginMode === 'google' && account.googleAccount && account.googleAccount.id)
+      ? account.googleAccount.id
+      : `${jobId}_${account.id}`;
     
     console.log(`\n🔧 === fillFormForAccountWithProfile START ===`);
     console.log(`👤 Аккаунт: ${account.email} (${account.id})`);
@@ -780,21 +774,22 @@ class FormAutomator {
       }
       
       // Запускаем браузер с профилем для этого аккаунта
-      console.log(`🌐 Запуск браузера с профилем для аккаунта: ${account.id}`);
+      console.log(`🌐 Запуск браузера с профилем для ключа: ${profileKey} (аккаунт ${account.id})`);
       // Логи без вывода огромного объекта options (который включает весь список аккаунтов)
       const optionsSummary = `headless=${options.headless !== undefined ? options.headless : false}, loginMode=${options.loginMode || 'anonymous'}, resetProfile=${options.resetProfile === true}, proxyGroup=${options.selectedProxyGroup || 'none'}`;
       console.log(`⚙️ Опции браузера: ${optionsSummary}`);
       console.log(`🔗 Настройки прокси:`, proxySettings ? 'Настроены' : 'Не настроены');
       
       try {
-        browser = await withTimeout(this.profileManager.launchBrowserWithProfile(account.id, options, proxySettings));
-        console.log(`✅ Браузер успешно запущен для аккаунта: ${account.id}`);
+        browser = await withTimeout(this.profileManager.launchBrowserWithProfile(profileKey, options, proxySettings));
+        console.log(`✅ Браузер успешно запущен для ключа профиля: ${profileKey}`);
         
-        // Добавляем браузер в отслеживание
-        const wasAdded = this.activeBrowsers.add(account.id);
-        console.log(`✅ Браузер добавлен в отслеживание: ${account.id} (был уже добавлен: ${!wasAdded})`);
-        console.log(`🌐 Активных браузеров: ${this.activeBrowsers.size}/${this.maxConcurrentBrowsers}`);
-        console.log(`📋 Список активных браузеров:`, Array.from(this.activeBrowsers));
+        // Добавляем браузер в отслеживание (глобально и для задачи)
+        const wasAdded = this.activeBrowsers.add(profileKey);
+        const set = this.jobBrowsers.get(jobId) || new Set();
+        set.add(profileKey);
+        this.jobBrowsers.set(jobId, set);
+        console.log(`✅ Браузер добавлен в отслеживание: ${profileKey} (задача ${jobId})`);
         
         // Проверяем соответствие с профиль менеджером
         const profileManagerBrowsers = Array.from(this.profileManager.activeBrowsers.keys());
@@ -859,20 +854,20 @@ class FormAutomator {
       if (timeoutHandle) clearTimeout(timeoutHandle);
       
       // Принудительно закрываем все браузеры для этого аккаунта
-      console.log(`🔒 Принудительно закрываем все браузеры для аккаунта ${account.id}...`);
+      console.log(`🔒 Принудительно закрываем все браузеры для профиля ${profileKey}...`);
       console.log(`📋 Активные браузеры перед закрытием:`, Array.from(this.activeBrowsers));
       
       try {
         // Закрываем через профиль менеджер
         console.log(`🔧 Закрываем браузер через профиль менеджер...`);
-        await this.profileManager.closeBrowserForAccount(account.id);
-        console.log(`✅ Браузер через профиль менеджер закрыт для аккаунта ${account.id}`);
+        await this.profileManager.closeBrowserForAccount(profileKey);
+        console.log(`✅ Браузер через профиль менеджер закрыт для профиля ${profileKey}`);
         
         // Удаляем браузер из отслеживания
-        const wasRemoved = this.activeBrowsers.delete(account.id);
-        console.log(`🗑️ Браузер ${account.id} удален из отслеживания: ${wasRemoved}`);
-        console.log(`🌐 Активных браузеров: ${this.activeBrowsers.size}/${this.maxConcurrentBrowsers}`);
-        console.log(`📋 Активные браузеры после закрытия:`, Array.from(this.activeBrowsers));
+        const wasRemoved = this.activeBrowsers.delete(profileKey);
+        const set = this.jobBrowsers.get(jobId);
+        if (set) set.delete(profileKey);
+        console.log(`🗑️ Браузер ${profileKey} удален из отслеживания (задача ${jobId}): ${wasRemoved}`);
         
         // Проверяем соответствие с профиль менеджером после удаления
         const profileManagerBrowsers = Array.from(this.profileManager.activeBrowsers.keys());
@@ -885,31 +880,7 @@ class FormAutomator {
         console.log(`🧹 Принудительно удален браузер ${account.id} из отслеживания`);
       }
       
-      // Дополнительно закрываем браузер напрямую если он еще открыт
-      if (browser) {
-        try {
-          // Проверяем, не закрыт ли уже браузер
-          const pages = await browser.pages();
-          if (pages.length === 0) {
-            console.log(`ℹ️ Браузер уже закрыт для аккаунта ${account.id}`);
-            return;
-          }
-          
-          console.log(`📄 Закрываем ${pages.length} страниц...`);
-          for (const page of pages) {
-            try {
-              await page.close();
-            } catch (pageError) {
-              console.log(`⚠️ Ошибка закрытия страницы:`, pageError.message);
-            }
-          }
-          
-          await browser.close();
-          console.log(`✅ Браузер напрямую закрыт для аккаунта ${account.id}`);
-        } catch (closeError) {
-          console.error(`❌ Ошибка при прямом закрытии браузера:`, closeError);
-        }
-      }
+      // Убираем повторное закрытие: браузер уже закрыт через профиль менеджер
       
       // Принудительная очистка памяти
       if (global.gc) {
@@ -1041,10 +1012,12 @@ class FormAutomator {
       
       console.log(`⏳ Отправляем форму входа...`);
       await Promise.all([
-        page.waitForNavigation({ waitUntil: 'networkidle2', timeout: 60000 }).catch(() => {}),
+        page.waitForNavigation({ waitUntil: 'domcontentloaded', timeout: 60000 }).catch(() => {}),
         nextBtn2.click()
       ]);
 
+      // Небольшая задержка, чтобы страница и фреймы инициализировались
+      await page.waitForTimeout(500);
       // Проверяем наличие кнопки подтверждения #confirm сразу после ввода пароля
       await this.handleConfirmButton(page);
 
@@ -1289,6 +1262,16 @@ class FormAutomator {
       console.log('📝 Начинаем заполнение полей...');
       for (const field of formConfig.fields) {
         await this.fillField(page, field, account, options, formConfig);
+      }
+      
+      // Опционально: активируем чекбокс "указать мой email в ответе" если он есть
+      try {
+        if (options && options.loginMode === 'google') {
+          const consentEmail = (account && account.email) || '';
+          await this.ensureEmailConsentCheckbox(page, consentEmail);
+        }
+      } catch (consentErr) {
+        console.log(`ℹ️ Чекбокс email-согласия не найден или клик не требуется: ${consentErr.message}`);
       }
       
       // Отправляем форму
@@ -2338,6 +2321,63 @@ class FormAutomator {
       console.error('Ошибка при поиске кнопки отправки:', error.message);
       // В крайнем случае пробуем Enter
       await page.keyboard.press('Enter');
+    }
+  }
+
+  // Включает чекбокс согласия на указание email в ответе, если он присутствует
+  async ensureEmailConsentCheckbox(page, accountEmail) {
+    // Ищем любой чекбокс, где текст/aria-label содержит подсказки про email/адрес почты
+    const keywords = [
+      'email', 'e-mail', 'почт', 'электронн', 'mail', 'адрес', 'response', 'ответ'
+    ];
+
+    // Ждём рендер чекбоксов чуть-чуть, но не обязательно
+    await page.waitForTimeout(500);
+
+    const checkboxHandle = await page.evaluateHandle((kw) => {
+      const all = Array.from(document.querySelectorAll('[role="checkbox"], input[type="checkbox"]'));
+      for (const el of all) {
+        const aria = (el.getAttribute('aria-label') || '').toLowerCase();
+        const parentText = (el.parentElement?.textContent || '').toLowerCase();
+        const text = aria + ' ' + parentText;
+        const hit = kw.some(k => text.includes(k));
+        if (hit) {
+          return el;
+        }
+      }
+      return null;
+    }, keywords);
+
+    if (!checkboxHandle) {
+      throw new Error('Чекбокс email-согласия не найден');
+    }
+
+    // Проверяем состояние и кликаем при необходимости
+    const isChecked = await page.evaluate((el) => {
+      const aria = el.getAttribute('aria-checked');
+      if (aria === 'true') return true;
+      if (el instanceof HTMLInputElement && el.type === 'checkbox') return el.checked === true;
+      return false;
+    }, checkboxHandle);
+
+    if (!isChecked) {
+      try {
+        await checkboxHandle.asElement().click();
+        await page.waitForTimeout(300);
+        console.log('✅ Активирован чекбокс email-согласия');
+      } catch (e) {
+        // Фоллбек: попробовать кликнуть по контейнеру
+        try {
+          const container = await page.evaluateHandle((el) => el.closest('.bzfPab, .wFGF8, .uVccjd, .aiSeRd, .FXLARc, .wGQFbe, .oLlshd') || el, checkboxHandle);
+          await container.asElement().click();
+          await page.waitForTimeout(300);
+          console.log('✅ Активирован чекбокс через контейнер');
+        } catch {
+          throw new Error('Не удалось кликнуть по чекбоксу email-согласия');
+        }
+      }
+    } else {
+      console.log('ℹ️ Чекбокс email-согласия уже активен');
     }
   }
 

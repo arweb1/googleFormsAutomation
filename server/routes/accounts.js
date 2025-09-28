@@ -47,6 +47,21 @@ router.get('/', async (req, res) => {
   }
 });
 
+// Удаление всех аккаунтов (важно объявлять ДО маршрута с :id)
+router.delete('/all', async (req, res) => {
+  try {
+    const accountManager = new AccountManager();
+    await accountManager.deleteAllAccounts();
+    res.json({ success: true, message: 'Все аккаунты удалены' });
+  } catch (error) {
+    console.error('Ошибка удаления всех аккаунтов:', error);
+    res.status(500).json({ 
+      error: 'Ошибка при удалении всех аккаунтов',
+      details: error.message 
+    });
+  }
+});
+
 // Получение аккаунта по ID
 router.get('/:id', async (req, res) => {
   try {

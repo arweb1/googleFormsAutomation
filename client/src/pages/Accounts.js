@@ -91,6 +91,17 @@ const Accounts = () => {
     }
   };
 
+  const handleDeleteAllAccounts = async () => {
+    if (window.confirm('Удалить все аккаунты? Это действие нельзя отменить.')) {
+      try {
+        await apiService.accounts.deleteAll();
+        await loadAccounts();
+      } catch (error) {
+        setError('Ошибка удаления всех аккаунтов: ' + error.message);
+      }
+    }
+  };
+
   const handleEditAccount = (account) => {
     setSelectedAccount(account);
     setNewAccount({
@@ -293,6 +304,14 @@ const Accounts = () => {
               }}
             >
               Массовое добавление
+            </Button>
+            <Button
+              color="error"
+              variant="outlined"
+              startIcon={<DeleteIcon />}
+              onClick={handleDeleteAllAccounts}
+            >
+              Удалить все
             </Button>
             <Button
               variant="contained"
