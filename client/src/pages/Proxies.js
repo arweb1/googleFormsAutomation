@@ -487,7 +487,17 @@ const Proxies = () => {
         <DialogTitle>Массовое добавление прокси</DialogTitle>
         <DialogContent>
           <Alert severity="info" sx={{ mb: 2 }}>
-            Введите прокси в формате: ip:port:username:password (по одному на строку)
+            <Typography variant="body2" component="div">
+              <strong>Поддерживаемые форматы прокси:</strong>
+              <br />• <code>host:port:username:password</code> - полный формат
+              <br />• <code>host:port:username</code> - без пароля
+              <br />• <code>host:port</code> - без авторизации
+              <br />• <code>http://username:password@host:port</code> - HTTP URL
+              <br />• <code>https://username:password@host:port</code> - HTTPS URL
+              <br />• <code>socks5://username:password@host:port</code> - SOCKS5 URL
+              <br />• <code>socks4://username:password@host:port</code> - SOCKS4 URL
+              <br /><br />Введите прокси по одному на строку:
+            </Typography>
           </Alert>
           
           <TextField
@@ -500,7 +510,12 @@ const Proxies = () => {
             rows={10}
             value={bulkForm.proxyStrings}
             onChange={(e) => setBulkForm({ ...bulkForm, proxyStrings: e.target.value })}
-            placeholder="154.36.110.240:6894:yhsbhuxt:c6xnievi0v70&#10;192.168.1.1:8080:user:pass&#10;..."
+            placeholder={`res.proxy-seller.io:10054:57a4bb621c0bc7bd:ZljWEL8t
+192.168.1.1:8080:user:pass
+192.168.1.1:8080:user
+192.168.1.1:8080
+http://user:pass@192.168.1.1:8080
+socks5://user:pass@192.168.1.1:8080`}
             sx={{ mb: 2 }}
           />
           

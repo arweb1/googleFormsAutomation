@@ -27,31 +27,113 @@ class Proxy {
     await fs.ensureDir(dataDir);
   }
 
-  // Парсинг прокси из строки формата "ip:port:username:password"
+  // Парсинг прокси из строки в различных форматах
   static parseProxyString(proxyString) {
-    const parts = proxyString.split(':');
-    if (parts.length < 2) {
-      throw new Error('Неверный формат прокси. Ожидается: ip:port:username:password');
+    const trimmed = proxyString.trim();
+    
+    // Формат 1: http://username:password@host:port или https://username:password@host:port
+    const urlMatch = trimmed.match(/^(https?):\/\/(?:([^:]+):([^@]+)@)?([^:\/]+):(\d+)$/);
+    if (urlMatch) {
+      return {
+        host: urlMatch[4],
+        port: parseInt(urlMatch[5]),
+        username: urlMatch[2] || '',
+        password: urlMatch[3] || ''
+      };
     }
-
-    return {
-      host: parts[0],
-      port: parseInt(parts[1]),
-      username: parts[2] || '',
-      password: parts[3] || ''
-    };
+    
+    // Формат 2: socks5://username:password@host:port или socks4://username:password@host:port
+    const socksMatch = trimmed.match(/^(socks[45]):\/\/(?:([^:]+):([^@]+)@)?([^:\/]+):(\d+)$/);
+    if (socksMatch) {
+      return {
+        host: socksMatch[4],
+        port: parseInt(socksMatch[5]),
+        username: socksMatch[2] || '',
+        password: socksMatch[3] || ''
+      };
+    }
+    
+    // Формат 3: host:port:username:password (4 части)
+    if (trimmed.split(':').length === 4) {
+      const parts = trimmed.split(':');
+      const port = parseInt(parts[1]);
+      if (isNaN(port)) {
+        throw new Error(`Неверный формат порта: ${parts[1]}. Порт должен быть числом.`);
+      }
+      return {
+        host: parts[0],
+        port: port,
+        username: parts[2],
+        password: parts[3]
+      };
+    }
+    
+    // Формат 4: host:port:username (3 части) - без пароля
+    if (trimmed.split(':').length === 3) {
+      const parts = trimmed.split(':');
+      const port = parseInt(parts[1]);
+      if (isNaN(port)) {
+        throw new Error(`Неверный формат порта: ${parts[1]}. Порт должен быть числом.`);
+      }
+      return {
+        host: parts[0],
+        port: port,
+        username: parts[2],
+        password: ''
+      };
+    }
+    
+    // Формат 5: host:port (2 части) - без авторизации
+    if (trimmed.split(':').length === 2) {
+      const parts = trimmed.split(':');
+      const port = parseInt(parts[1]);
+      if (isNaN(port)) {
+        throw new Error(`Неверный формат порта: ${parts[1]}. Порт должен быть числом.`);
+      }
+      return {
+        host: parts[0],
+        port: port,
+        username: '',
+        password: ''
+      };
+    }
+    
+    throw new Error(`Неверный формат прокси: "${proxyString}". Поддерживаемые форматы:
+- host:port:username:password
+- host:port:username  
+- host:port
+- http://username:password@host:port
+- https://username:password@host:port
+- socks5://username:password@host:port
+- socks4://username:password@host:port`);
   }
 
   // Создание прокси из строки
   static fromString(proxyString, options = {}) {
     const parsed = this.parseProxyString(proxyString);
+    
+    // Определяем тип прокси из строки или используем переданный
+    let proxyType = options.type || 'http';
+    
+    // Если строка содержит протокол, используем его
+    const trimmed = proxyString.trim();
+    if (trimmed.startsWith('socks5://')) {
+      proxyType = 'socks5';
+    } else if (trimmed.startsWith('socks4://')) {
+      proxyType = 'socks4';
+    } else if (trimmed.startsWith('https://')) {
+      proxyType = 'https';
+    } else if (trimmed.startsWith('http://')) {
+      proxyType = 'http';
+    }
+    
     return new Proxy({
       name: options.name || `${parsed.host}:${parsed.port}`,
       host: parsed.host,
       port: parsed.port,
       username: parsed.username,
       password: parsed.password,
-      type: options.type || 'http',
+      type: proxyType,
       group: options.group || 'default',
       description: options.description || ''
     });

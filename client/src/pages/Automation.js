@@ -358,6 +358,18 @@ const Automation = () => {
     initializeAccountData(event.target.value, 1);
   };
 
+  const hasBoundProxies = () => {
+    if (loginMode === 'google' && selectedAccounts.length > 0) {
+      // Проверяем, есть ли у выбранных аккаунтов привязанные прокси
+      const accountsWithProxies = selectedAccounts.filter(accountId => {
+        const account = accounts.find(acc => acc.id === accountId);
+        return account && account.data && account.data.proxyId;
+      });
+      return accountsWithProxies.length > 0;
+    }
+    return false;
+  };
+
   const handleStartAutomation = async () => {
     if (!selectedForm) {
       setError('Выберите форму');
@@ -369,8 +381,9 @@ const Automation = () => {
       return;
     }
 
-    if (loginMode === 'google' && !selectedProxyGroup) {
-      setError('Выберите группу прокси для режима с логином');
+    // Проверяем прокси только если нет привязанных прокси у аккаунтов
+    if (loginMode === 'google' && !selectedProxyGroup && !hasBoundProxies()) {
+      setError('Выберите группу прокси для режима с логином или привяжите прокси к аккаунтам');
       return;
     }
 
@@ -746,7 +759,7 @@ const Automation = () => {
                     variant="contained"
                     startIcon={<PlayIcon />}
                     onClick={handleStartAutomation}
-                    disabled={running || !selectedForm || accountData.length === 0 || (loginMode === 'google' && selectedAccounts.length === 0)}
+                    disabled={running || !selectedForm || accountData.length === 0 || (loginMode === 'google' && selectedAccounts.length === 0) || (loginMode === 'google' && !selectedProxyGroup && !hasBoundProxies())}
                     fullWidth
                   >
                     {running ? 'Запуск...' : 
@@ -768,6 +781,17 @@ const Automation = () => {
                     `Анонимный режим: ${accountData.length} аккаунтов`
                   }
                 </Typography>
+                
+                {loginMode === 'google' && (
+                  <Typography variant="body2" color="text.secondary" sx={{ mt: 1 }}>
+                    {hasBoundProxies() ? 
+                      '✅ Используются привязанные прокси аккаунтов' :
+                      selectedProxyGroup ? 
+                        `🌐 Используется группа прокси: ${selectedProxyGroup}` :
+                        '⚠️ Нужно выбрать группу прокси или привязать прокси к аккаунтам'
+                    }
+                  </Typography>
+                )}
               </CardContent>
             </Card>
           </Grid>

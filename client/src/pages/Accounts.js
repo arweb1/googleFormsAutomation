@@ -22,7 +22,14 @@ import {
   TableHead,
   TableRow,
   Paper,
-  TablePagination
+  TablePagination,
+  FormControl,
+  InputLabel,
+  Select,
+  MenuItem,
+  Checkbox,
+  FormControlLabel,
+  Divider
 } from '@mui/material';
 import {
   Add as AddIcon,
@@ -30,12 +37,15 @@ import {
   Edit as EditIcon,
   Delete as DeleteIcon,
   Search as SearchIcon,
-  CloudUpload as CloudUploadIcon
+  CloudUpload as CloudUploadIcon,
+  Link as LinkIcon,
+  LinkOff as LinkOffIcon
 } from '@mui/icons-material';
 import { apiService } from '../services/apiService';
 
 const Accounts = () => {
   const [accounts, setAccounts] = useState([]);
+  const [proxies, setProxies] = useState([]);
   const [loading, setLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState('');
   const [openDialog, setOpenDialog] = useState(false);
@@ -51,9 +61,13 @@ const Accounts = () => {
   const [openBulkDialog, setOpenBulkDialog] = useState(false);
   const [bulkText, setBulkText] = useState('');
   const [bulkLoading, setBulkLoading] = useState(false);
+  const [openProxyDialog, setOpenProxyDialog] = useState(false);
+  const [selectedAccounts, setSelectedAccounts] = useState([]);
+  const [selectedProxy, setSelectedProxy] = useState('');
 
   useEffect(() => {
     loadAccounts();
+    loadProxies();
   }, []);
 
   const loadAccounts = async () => {
@@ -65,6 +79,15 @@ const Accounts = () => {
       setError('Ошибка загрузки аккаунтов: ' + error.message);
     } finally {
       setLoading(false);
+    }
+  };
+
+  const loadProxies = async () => {
+    try {
+      const response = await apiService.proxies.getAll();
+      setProxies(response.data.data || []);
+    } catch (error) {
+      console.error('Ошибка загрузки прокси:', error);
     }
   };
 
@@ -264,6 +287,123 @@ const Accounts = () => {
     setPage(0);
   };
 
+  const handleAccountSelection = (accountId, isSelected) => {
+    if (isSelected) {
+      setSelectedAccounts(prev => [...prev, accountId]);
+    } else {
+      setSelectedAccounts(prev => prev.filter(id => id !== accountId));
+    }
+  };
+
+  const handleSelectAllAccounts = (isSelected) => {
+    if (isSelected) {
+      setSelectedAccounts(filteredAccounts.map(account => account.id));
+    } else {
+      setSelectedAccounts([]);
+    }
+  };
+
+  const handleBulkProxyAssign = async () => {
+    if (selectedAccounts.length === 0) {
+      setError('Выберите аккаунты для привязки');
+      return;
+    }
+
+    try {
+      setError(null);
+      
+      // Если выбран конкретный прокси - привязываем все к нему
+      if (selectedProxy) {
+        const updates = selectedAccounts.map(accountId => ({
+          id: accountId,
+          data: { proxyId: selectedProxy }
+        }));
+
+        for (const update of updates) {
+          await apiService.accounts.update(update.id, { data: update.data });
+        }
+      } else {
+        // Автоматическое распределение свободных прокси
+        await handleAutoProxyDistribution();
+      }
+
+      await loadAccounts();
+      setOpenProxyDialog(false);
+      setSelectedAccounts([]);
+      setSelectedProxy('');
+    } catch (error) {
+      setError('Ошибка привязки прокси: ' + error.message);
+    }
+  };
+
+  const handleAutoProxyDistribution = async () => {
+    // Получаем все аккаунты с их текущими привязками
+    const accountsWithProxies = accounts.map(acc => ({
+      id: acc.id,
+      email: acc.email,
+      currentProxyId: acc.data?.proxyId || null
+    }));
+
+    // Получаем все прокси
+    const allProxies = proxies.map(proxy => ({
+      id: proxy.id,
+      name: proxy.name,
+      host: proxy.host,
+      port: proxy.port
+    }));
+
+    // Находим свободные прокси (не привязанные ни к одному аккаунту)
+    const usedProxyIds = new Set(accountsWithProxies.map(acc => acc.currentProxyId).filter(Boolean));
+    const freeProxies = allProxies.filter(proxy => !usedProxyIds.has(proxy.id));
+
+    console.log(`Свободных прокси: ${freeProxies.length}, нужно привязать: ${selectedAccounts.length}`);
+
+    if (freeProxies.length < selectedAccounts.length) {
+      throw new Error(`Недостаточно свободных прокси. Доступно: ${freeProxies.length}, нужно: ${selectedAccounts.length}`);
+    }
+
+    // Распределяем свободные прокси по выбранным аккаунтам
+    const updates = selectedAccounts.map((accountId, index) => {
+      const proxy = freeProxies[index % freeProxies.length];
+      return {
+        id: accountId,
+        data: { proxyId: proxy.id }
+      };
+    });
+
+    // Обновляем каждый аккаунт
+    for (const update of updates) {
+      await apiService.accounts.update(update.id, { data: update.data });
+    }
+
+    console.log(`✅ Автоматически привязано ${updates.length} аккаунтов к свободным прокси`);
+  };
+
+  const handleUnlinkProxy = async (accountId) => {
+    try {
+      const account = accounts.find(acc => acc.id === accountId);
+      if (!account) return;
+
+      const updatedData = { ...account.data };
+      delete updatedData.proxyId;
+
+      await apiService.accounts.update(accountId, { data: updatedData });
+      await loadAccounts();
+    } catch (error) {
+      setError('Ошибка отвязки прокси: ' + error.message);
+    }
+  };
+
+  const getProxyName = (proxyId) => {
+    const proxy = proxies.find(p => p.id === proxyId);
+    return proxy ? proxy.name : 'Неизвестный прокси';
+  };
+
+  const getFreeProxiesCount = () => {
+    const usedProxyIds = new Set(accounts.map(acc => acc.data?.proxyId).filter(Boolean));
+    return proxies.filter(proxy => !usedProxyIds.has(proxy.id)).length;
+  };
+
   if (loading) {
     return (
       <Container maxWidth="lg">
@@ -304,6 +444,18 @@ const Accounts = () => {
               }}
             >
               Массовое добавление
+            </Button>
+            <Button
+              variant="outlined"
+              startIcon={<LinkIcon />}
+              onClick={() => {
+                setSelectedAccounts([]);
+                setSelectedProxy('');
+                setOpenProxyDialog(true);
+              }}
+              disabled={accounts.length === 0 || proxies.length === 0}
+            >
+              Привязать прокси
             </Button>
             <Button
               color="error"
@@ -351,8 +503,16 @@ const Accounts = () => {
               <Table>
                 <TableHead>
                   <TableRow>
+                    <TableCell padding="checkbox">
+                      <Checkbox
+                        checked={selectedAccounts.length === filteredAccounts.length && filteredAccounts.length > 0}
+                        indeterminate={selectedAccounts.length > 0 && selectedAccounts.length < filteredAccounts.length}
+                        onChange={(e) => handleSelectAllAccounts(e.target.checked)}
+                      />
+                    </TableCell>
                     <TableCell>Email</TableCell>
                     <TableCell>Пароль</TableCell>
+                    <TableCell>Привязанный прокси</TableCell>
                     <TableCell>Дополнительные данные</TableCell>
                     <TableCell>Создан</TableCell>
                     <TableCell>Действия</TableCell>
@@ -363,11 +523,41 @@ const Accounts = () => {
                     .slice(page * rowsPerPage, page * rowsPerPage + rowsPerPage)
                     .map((account) => (
                     <TableRow key={account.id}>
+                      <TableCell padding="checkbox">
+                        <Checkbox
+                          checked={selectedAccounts.includes(account.id)}
+                          onChange={(e) => handleAccountSelection(account.id, e.target.checked)}
+                        />
+                      </TableCell>
                       <TableCell>{account.email}</TableCell>
                       <TableCell>{'*'.repeat(account.password.length)}</TableCell>
                       <TableCell>
+                        {account.data.proxyId ? (
+                          <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                            <Chip
+                              label={getProxyName(account.data.proxyId)}
+                              size="small"
+                              color="primary"
+                              variant="outlined"
+                            />
+                            <IconButton
+                              size="small"
+                              onClick={() => handleUnlinkProxy(account.id)}
+                              title="Отвязать прокси"
+                              color="error"
+                            >
+                              <LinkOffIcon fontSize="small" />
+                            </IconButton>
+                          </Box>
+                        ) : (
+                          <Typography variant="body2" color="text.secondary">
+                            Не привязан
+                          </Typography>
+                        )}
+                      </TableCell>
+                      <TableCell>
                         <Box sx={{ display: 'flex', gap: 0.5, flexWrap: 'wrap' }}>
-                          {Object.keys(account.data).map((key) => (
+                          {Object.keys(account.data).filter(key => key !== 'proxyId').map((key) => (
                             <Chip
                               key={key}
                               label={`${key}: ${account.data[key]}`}
@@ -518,6 +708,116 @@ user3@example.com;mypassword;backup@example.com`}
             disabled={bulkLoading || !bulkText.trim()}
           >
             {bulkLoading ? <CircularProgress size={20} /> : 'Добавить аккаунты'}
+          </Button>
+        </DialogActions>
+      </Dialog>
+
+      {/* Диалог привязки прокси */}
+      <Dialog open={openProxyDialog} onClose={() => setOpenProxyDialog(false)} maxWidth="md" fullWidth>
+        <DialogTitle>
+          Привязка прокси к аккаунтам
+        </DialogTitle>
+        <DialogContent>
+          <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+            Выберите аккаунты и прокси для привязки. Каждый аккаунт будет использовать только привязанный к нему прокси.
+          </Typography>
+          
+          <Box sx={{ display: 'flex', gap: 2, mb: 3 }}>
+            <FormControl fullWidth>
+              <InputLabel>Выберите прокси (опционально)</InputLabel>
+              <Select
+                value={selectedProxy}
+                onChange={(e) => setSelectedProxy(e.target.value)}
+                label="Выберите прокси (опционально)"
+              >
+                <MenuItem value="">
+                  <em>Автоматическое распределение свободных прокси</em>
+                </MenuItem>
+                {proxies.map((proxy) => (
+                  <MenuItem key={proxy.id} value={proxy.id}>
+                    {proxy.name} ({proxy.host}:{proxy.port})
+                  </MenuItem>
+                ))}
+              </Select>
+            </FormControl>
+          </Box>
+
+          <Box sx={{ mb: 2 }}>
+            <Typography variant="body2" color="text.secondary">
+              Свободных прокси: <strong>{getFreeProxiesCount()}</strong> из {proxies.length}
+            </Typography>
+            {selectedProxy === '' && (
+              <Typography variant="body2" color="primary">
+                При автоматическом распределении каждый аккаунт получит уникальный свободный прокси
+              </Typography>
+            )}
+          </Box>
+
+          <Divider sx={{ my: 2 }} />
+
+          <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
+            <Typography variant="h6">
+              Выбранные аккаунты ({selectedAccounts.length})
+            </Typography>
+            <Box sx={{ display: 'flex', gap: 1 }}>
+              <Button
+                size="small"
+                variant="outlined"
+                onClick={() => handleSelectAllAccounts(true)}
+                disabled={selectedAccounts.length === filteredAccounts.length}
+              >
+                Выбрать все
+              </Button>
+              <Button
+                size="small"
+                variant="outlined"
+                onClick={() => handleSelectAllAccounts(false)}
+                disabled={selectedAccounts.length === 0}
+              >
+                Снять все
+              </Button>
+            </Box>
+          </Box>
+
+          <Box sx={{ maxHeight: 300, overflow: 'auto' }}>
+            {filteredAccounts.map((account) => (
+              <FormControlLabel
+                key={account.id}
+                control={
+                  <Checkbox
+                    checked={selectedAccounts.includes(account.id)}
+                    onChange={(e) => handleAccountSelection(account.id, e.target.checked)}
+                  />
+                }
+                label={
+                  <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                    <Typography variant="body2">{account.email}</Typography>
+                    {account.data.proxyId && (
+                      <Chip
+                        label={`Текущий: ${getProxyName(account.data.proxyId)}`}
+                        size="small"
+                        color="warning"
+                        variant="outlined"
+                      />
+                    )}
+                  </Box>
+                }
+              />
+            ))}
+          </Box>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setOpenProxyDialog(false)}>Отмена</Button>
+          <Button
+            onClick={handleBulkProxyAssign}
+            variant="contained"
+            startIcon={<LinkIcon />}
+            disabled={selectedAccounts.length === 0}
+          >
+            {selectedProxy ? 
+              `Привязать к прокси (${selectedAccounts.length} аккаунтов)` :
+              `Автоматически распределить (${selectedAccounts.length} аккаунтов)`
+            }
           </Button>
         </DialogActions>
       </Dialog>
